@@ -178,6 +178,16 @@ def draw_nx_graph(graph):
                      pos=optimal_node_positioning)
 
 
+def Ising(circuit, edge, gamma):
+    """
+    Applies an Ising-type interaction to given edge, connecting qubits.
+    """
+    left_qubit, right_qubit = edge
+    circuit.cp(-2 * gamma, left_qubit, right_qubit) # cp replaces cu1
+    circuit.p(gamma, left_qubit)                    # p replaces u1
+    circuit.p(gamma, right_qubit)
+
+
 def build_circuit(nodes, edges, gamma_opt, beta_opt):
     """
     Builds quantum circuit to prepare trial state, using optimal parameters
@@ -190,10 +200,7 @@ def build_circuit(nodes, edges, gamma_opt, beta_opt):
     # Applies circuit connectivity with Ising type gates
     circuit.barrier()
     for edge in edges:
-        left_qubit, right_qubit = edge
-        circuit.cp(-2 * gamma_opt, left_qubit, right_qubit) # cp replaces cu1
-        circuit.p(gamma_opt, left_qubit)                    # p replaces u1
-        circuit.p(gamma_opt, right_qubit)
+        Ising(circuit, edge, gamma_opt)
 
     # Applies single qubit rotations to generate final state evolution 
     circuit.barrier()
@@ -204,35 +211,45 @@ def build_circuit(nodes, edges, gamma_opt, beta_opt):
     return circuit
 
 
+def ZZ(circuit, edge, gamma):
+    """
+    Applies a ZZ interaction to given edge, connecting qubits.
+    """
+    left_qubit, right_qubit = edge
+    circuit.cx(left_qubit, right_qubit)
+    circuit.rz(-2 * gamma, right_qubit)
+    circuit.cx(right_qubit, left_qubit)
+
+
 def build_swap_circuit(nodes, edges, gamma_opt, beta_opt):
     """
-    Builds quantum circuit using optimal paramaters, decomposing gates via 
-      application of Fermionic SWAPS.
+    Builds quantum circuit using optimal paramaters, using Fermionic SWAP
+     network topology (improving success probability...?).
     """
-    ## Decomposes gates (via application of Fermionic SWAPs) to improve success
-    ##  probability.
     
-    # Builds empty circuit and initializes all qubits (except the last, used as
-    #  an "always on" control) into superposition.
+    # Builds empty circuit and initializes all qubits into superposition.
     num_qubits = len(nodes)
-    circuit = QuantumCircuit(num_qubits + 1, num_qubits + 1)
-    #CONTROL_ALWAYS_ON = num_qubits
-    #circuit.x(CONTROL_ALWAYS_ON)
+    circuit = QuantumCircuit(num_qubits, num_qubits)
     circuit.h(nodes)
 
-    # Applies circuit connectivity with Ising type gates
+    # Applies circuit connectivity with ZZ interactions, following Fermionic
+    #  SWAP network topology.
     circuit.barrier()
-    for edge in edges:
-        left_qubit, right_qubit = edge
+    step = 0
+    while step < num_qubits:
+        pairs = [(idx, idx + 1) for idx in range(0, num_qubits // 2 + 2, 2)]
+        for edge in pairs:
+            if edge in edges:
+                ZZ(circuit, edge, gamma_opt)
 
-        # Decomposed cp(theta)
-        circuit.cx(left_qubit, right_qubit)
-        circuit.rz(-2 * gamma_opt, right_qubit)
-        circuit.cx(right_qubit, left_qubit)
-        circuit.cx(left_qubit, right_qubit)
+        if step == num_qubits:
+            break
 
-        circuit.p(gamma_opt, left_qubit) 
-        circuit.p(gamma_opt, right_qubit)       
+        pairs = [(idx, idx - 1) for idx in range(num_qubits // 2,
+                                                 num_qubits, 2)]
+        for edge in pairs:
+            if edge in edges:
+                ZZ(circuit, edge, gamma_opt)
 
     # Applies single qubit rotations to generate final state evolution 
     circuit.barrier()
@@ -336,7 +353,8 @@ def add_noise(circuit, error_probability):
     return noise_model, noisy_counts
 
 
-def estimate_gradient(qubit_graph, gamma, beta, error_probability):
+def estimate_gradient(qubit_graph, gamma, beta, error_probability,
+                      swap_network=False):
     """
     Estimates gradient magnitudes (and expected costs) for evaluation.
     """
@@ -347,7 +365,10 @@ def estimate_gradient(qubit_graph, gamma, beta, error_probability):
     delta = 0.1
     for parameters_opt in [(gamma, beta), (gamma + delta, beta + delta)]:
         gamma_opt, beta_opt = parameters_opt
-        circuit = build_swap_circuit(nodes, edges, gamma_opt, beta_opt)
+        if swap_network:
+            circuit = build_swap_circuit(nodes, edges, gamma_opt, beta_opt)
+        else:
+            circuit = build_circuit(nodes, edges, gamma_opt, beta_opt) 
         if error_probability > 0:
             ## bckd = add_noise() if error_probability else QASM_BACKEND
             depolarizing_noise, counts = add_noise(circuit,
@@ -379,36 +400,56 @@ def simulate(num_qubits_range, num_trials, error_probability):
     Simulates circuit and evaluates data for some number of trials, returning
       expected costs.
     """
-    # Over some number of trials, 
+    # Over some number of trials, simulates quantum circuit(s), possibly in the
+    #  presence of noise, and computes gradient and expected cost values for
+    #  later plotting. 
     expected_costs = {num_qubits:[] for num_qubits in num_qubits_range}
     gradient_magnitudes = {num_qubits:[] for num_qubits in num_qubits_range}
+    expected_costs_fermionic = {num_qubits:[] for num_qubits in
+                                num_qubits_range}
+    gradient_magnitudes_fermionic = {num_qubits:[] for num_qubits in
+                                     num_qubits_range}
     for trial in range(num_trials):
         gamma, beta = random() * pi, random() * pi
         for num_qubits in num_qubits_range:
             qubit_graph = build_erdos_renyi(num_qubits, EDGE_PROBABILITY)
             gradient, expected_cost = estimate_gradient(qubit_graph, gamma,
                                                         beta, error_probability)
+            gradient_fermionic,\
+            expected_cost_fermionic = estimate_gradient(qubit_graph, gamma,
+                                                        beta, error_probability,
+                                                        swap_network=True)
             expected_costs[num_qubits].append(expected_cost)
+            expected_costs_fermionic[num_qubits].append(expected_cost_fermionic)
             gradient_magnitudes[num_qubits].append(gradient)
-    print('=', end='', flush=True)
+            gradient_magnitudes_fermionic[num_qubits].append(gradient_fermionic)
+    print('=', end='', flush=True) # loading bar...
+
+    # Computes variance and mean over number trials.
     variances = [np.var(expected_costs[num_qubits])
                  for num_qubits in num_qubits_range]
+    variances_fermionic = [np.var(expected_costs_fermionic[num_qubits])
+                           for num_qubits in num_qubits_range]
     gradient_magnitudes = [np.mean(gradient_magnitudes[num_qubits])
                            for num_qubits in num_qubits_range]
-    return variances, gradient_magnitudes
+    gradients_fermionic = [np.mean(gradient_magnitudes_fermionic[num_qubits])
+                           for num_qubits in num_qubits_range]
+    return variances, gradient_magnitudes, variances_fermionic, \
+           gradients_fermionic
 
 
 #------------------------------------------------------------------------------#
-def basic_simulate(nodes, edges, gamma_opt, beta_opt, noisy=False, swap=False):
+def basic_simulate(nodes, edges, gamma_opt, beta_opt, noisy=False,
+                   swap_network=False):
     """
     Runs simulation on circuit given by set of qubits (nodes) and connectivity
      (edges), using given optimal parameters. 
     """
     # Builds quantum circuit to prepare trial state, using optimal parameters
-    if swap:
-        circuit = build_circuit(nodes, edges, gamma_opt, beta_opt)
-    else:
+    if swap_network:
         circuit = build_swap_circuit(nodes, edges, gamma_opt, beta_opt)
+    else:
+        circuit = build_circuit(nodes, edges, gamma_opt, beta_opt)
     circuit_image = circuit_drawer(circuit, output="latex")
     image_filename = "circuit.jpg" if not noisy else "noisy_circuit.jpg"
     circuit_image.save(image_filename)
