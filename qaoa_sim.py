@@ -241,6 +241,7 @@ def build_swap_circuit(nodes, edges, gamma_opt, beta_opt):
         for edge in pairs:
             if edge in edges:
                 ZZ(circuit, edge, gamma_opt)
+        step += 1
 
         if step == num_qubits:
             break
@@ -250,6 +251,7 @@ def build_swap_circuit(nodes, edges, gamma_opt, beta_opt):
         for edge in pairs:
             if edge in edges:
                 ZZ(circuit, edge, gamma_opt)
+        step += 1
 
     # Applies single qubit rotations to generate final state evolution 
     circuit.barrier()

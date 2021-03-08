@@ -24,6 +24,7 @@ def main():
     if VERBOSE:
         print("Iterating over depolarizing error probabilities...")
     start = time()
+    gradient_plots = [] # keeps track of plot lines to color
     for idx, error_probability in enumerate(error_probabilities):
         if VERBOSE:
             print("For error probability %s, iterating over qubit number..."
@@ -39,9 +40,9 @@ def main():
         plt.figure(gradient_figure.number)
         plot_lines = plt.plot(num_qubits_range, gradient_magnitudes,
                               label=error_probability, marker='o',
-                              markersize=12, colors=plot_colors[idx])
+                              markersize=12, color=plot_colors[idx])
         plt.plot(num_qubits_range, gradients_fermionic, label=error_probability,
-                 marker='x', markersize=12, colors=plot_colors[idx],
+                 marker='x', markersize=12, color=plot_colors[idx],
                  linestyle="--")
         gradient_plots.append(plot_lines[0])
         #cost_variances_by_error[error_probability] = cost_variances
