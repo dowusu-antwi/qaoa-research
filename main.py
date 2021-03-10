@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from qaoa_sim import *
+from datetime import datetime
 
 def main():
     """
@@ -15,7 +16,7 @@ def main():
     #variance_figure = plt.figure()
     gradient_figure = plt.figure()
     num_qubits_range = range(4,10)
-    num_trials = 5
+    num_trials = 2
     
     # This iterates over each depolarizing error probability to generate a cost
     #  outputs for increasing circuit size (number of qubits). Per circuit size,
@@ -67,8 +68,16 @@ def main():
                title="depolarization probability", loc='upper left')
     plt.xlabel("number of qubits")
     plt.ylabel("gradient magnitude")
-    plt.show() #show()
-    #plt.savefig("gradient-versus-numqubits-%smin.png" % round(runtime_sec/60))
+    figure = show("live")
+
+    # Saves plot to images subfolder (using datetime string formatting).
+    filename = datetime.today().strftime("%Y-%m-%d-%H:%M") + "-grad-v-num" + \
+               "-runtime-%s-min" % round(runtime_sec / 60)
+    filepath = "images/" + filename + ".jpg"
+    if figure:
+        figure.savefig(filepath)
+    else:
+        plt.savefig(filepath)
 
 if __name__ == "__main__":
     main()

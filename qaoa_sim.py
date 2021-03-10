@@ -59,6 +59,16 @@ def show(descr=None):
     """
     Plots data and shows figure (maximized) for given description.
     """
+    # Shows plot live, using standard plt.show().
+    if descr == "live":
+        figure = plt.gcf()
+        plt.show()
+        manager = figure.canvas.manager
+        manager.window.showMaximized() # These lines are to make sure that the
+        figure.tight_layout()          #  maximized plot is saved.
+        return figure
+
+    # Otherwise, asks for verbose output (i.e., showing plot v. not showing). 
     if descr:
         answer = input("Show '%s'? (y): " % descr)
         if answer != 'y':
@@ -233,7 +243,9 @@ def build_swap_circuit(nodes, edges, gamma_opt, beta_opt):
     circuit.h(nodes)
 
     # Applies circuit connectivity with ZZ interactions, following Fermionic
-    #  SWAP network topology.
+    #  SWAP network topology. Given N qubits in our circuit, per step we
+    #  alternate between swapping the first floor(N/2) pairs and the last
+    #  floor(N/2) pairs, stopping after N steps (N * floor(N/2) swaps).
     circuit.barrier()
     step = 0
     while step < num_qubits:
@@ -355,7 +367,7 @@ def add_noise(circuit, error_probability):
     return noise_model, noisy_counts
 
 
-def estimate_gradient(qubit_graph, gamma, beta, error_probability,
+def estimate_gradient(qubit_graph, gamma, beta, error_probability=0,
                       swap_network=False):
     """
     Estimates gradient magnitudes (and expected costs) for evaluation.
@@ -370,7 +382,14 @@ def estimate_gradient(qubit_graph, gamma, beta, error_probability,
         if swap_network:
             circuit = build_swap_circuit(nodes, edges, gamma_opt, beta_opt)
         else:
-            circuit = build_circuit(nodes, edges, gamma_opt, beta_opt) 
+            circuit = build_circuit(nodes, edges, gamma_opt, beta_opt)
+        ########################################################################
+        if num_qubits == 5 and EDGE_PROBABILITY == 1:
+            circuit_image = circuit_drawer(circuit, output="latex")
+            image_filename = "circuit"
+            filepath = "images/" + image_filename + ".jpg"
+            circuit_image.save(filepath)
+        ########################################################################
         if error_probability > 0:
             ## bckd = add_noise() if error_probability else QASM_BACKEND
             depolarizing_noise, counts = add_noise(circuit,
