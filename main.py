@@ -2,6 +2,7 @@
 
 from qaoa_sim import *
 from datetime import datetime
+from matplotlib.lines import Line2D
 
 def main():
     """
@@ -16,7 +17,7 @@ def main():
     #variance_figure = plt.figure()
     gradient_figure = plt.figure(figsize=(8, 4.5))
     num_qubits_range = range(4,10)
-    num_trials = 100
+    num_trials = 10
     
     # This iterates over each depolarizing error probability to generate a cost
     #  outputs for increasing circuit size (number of qubits). Per circuit size,
@@ -64,8 +65,15 @@ def main():
     
     plt.figure(gradient_figure.number) # figsize in inches
     plt.title("Gradient of Cost v. Circuit Size (# of Qubits)")
-    plt.legend(gradient_plots, error_probabilities,
-               title="depolarization probability", loc='upper left')
+    error_probability_legend = plt.legend(gradient_plots, error_probabilities,
+                                          title="depolarization probability",
+                                          loc='upper right')
+    plt.gca().add_artist(error_probability_legend) # keep this legend instance
+    legend_lines = [Line2D(range(4), range(4), color='k', lw=1, marker='o'),
+                    Line2D(range(4), range(4), color='k', lw=1, marker='x',
+                           ls='--')]
+    plt.legend(legend_lines, ["Ising type", "Fermionic SWAP"],
+               title="connectivity", loc='lower right')
     plt.xlabel("number of qubits")
     plt.ylabel("gradient magnitude")
     figure = show("live")
