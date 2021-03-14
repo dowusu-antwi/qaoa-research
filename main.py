@@ -14,9 +14,9 @@ def main():
     gradient_magnitudes_by_error = {}
     #variances = {error: [] for error in error_probabilities} # cost variances
     #variance_figure = plt.figure()
-    gradient_figure = plt.figure()
+    gradient_figure = plt.figure(figsize=(8, 4.5))
     num_qubits_range = range(4,10)
-    num_trials = 2
+    num_trials = 100
     
     # This iterates over each depolarizing error probability to generate a cost
     #  outputs for increasing circuit size (number of qubits). Per circuit size,
@@ -62,7 +62,7 @@ def main():
     #show()
     #plt.savefig("cost-versus-numqubits-%smin.png" % round(runtime_sec / 60))
     
-    plt.figure(gradient_figure.number)
+    plt.figure(gradient_figure.number) # figsize in inches
     plt.title("Gradient of Cost v. Circuit Size (# of Qubits)")
     plt.legend(gradient_plots, error_probabilities,
                title="depolarization probability", loc='upper left')
@@ -75,9 +75,9 @@ def main():
                "-runtime-%s-min" % round(runtime_sec / 60)
     filepath = "images/" + filename + ".jpg"
     if figure:
-        figure.savefig(filepath)
+        figure.savefig(filepath, dpi=240)
     else:
-        plt.savefig(filepath)
+        plt.savefig(filepath, dpi=240)
 
 if __name__ == "__main__":
     main()

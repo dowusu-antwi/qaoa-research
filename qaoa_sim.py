@@ -6,7 +6,6 @@ QAOA Noiseless + Noisy Simulations
 (Based on Combinatorial optimization with QAOA, see: https://qiskit.org/textbook/ch-applications/qaoa.html)
 
 author: dowusu
-updated: Feb 26, 2021
 """
 
 ###############################################################################
@@ -63,9 +62,9 @@ def show(descr=None):
     if descr == "live":
         figure = plt.gcf()
         plt.show()
-        manager = figure.canvas.manager
-        manager.window.showMaximized() # These lines are to make sure that the
-        figure.tight_layout()          #  maximized plot is saved.
+        #manager = figure.canvas.manager
+        #manager.window.showMaximized() # These lines are to make sure that the
+        #figure.tight_layout()          #  maximized plot is saved.
         return figure
 
     # Otherwise, asks for verbose output (i.e., showing plot v. not showing). 
@@ -96,10 +95,10 @@ def build_butterfly(num_qubits):
 
 def build_param_space(step):
     """
-    Gets 2D grid of gamma and beta parameters.
+    Gets 2D grids of gamma and beta parameters, for parameter searching.
     """
     gamma_axis, beta_axis = np.arange(0, pi, step), np.arange(0, pi, step)
-    gamma_grid, beta_grid = np.meshgrid(gamma_axis, beta_axis) # why two grids?
+    gamma_grid, beta_grid = np.meshgrid(gamma_axis, beta_axis)
     return gamma_grid, beta_grid
 
 
@@ -141,11 +140,11 @@ def plot_expectation_3D(expectation):
     axis.set_ylabel("Beta")
     axis.set_zlabel("Expectation")
     axis.set_zlim(zmin, zmax)
-    ###########################################################################
-    # TODO: just plotting, not important...what do the following refer to?
-    axis.zaxis.set_major_locator(LinearLocator(3))
+    
+    # Sets zaxis tick locator (linear with 3 ticks?) and tick label format
+    axis.zaxis.set_major_locator(LinearLocator(numticks=3))
     axis.zaxis.set_major_formatter(FormatStrFormatter('%.02f'))
-    ########################################################################### 
+    
     step = 0.1
     gamma_grid, beta_grid = build_param_space(step)
     surface = axis.plot_surface(gamma_grid, beta_grid, expectation,
@@ -346,7 +345,7 @@ def add_noise(circuit, error_probability):
     two_qubit_error = depolarizing_error(error_probability, 2)
 
     single_qubit_gates = ["p", "rx"]    # p <- u1
-    two_qubit_gates = ["cp"]            #cp <- cu1
+    two_qubit_gates = ["cp"]            # cp <- cu1
     noise_model.add_all_qubit_quantum_error(single_qubit_error,
                                             single_qubit_gates)
     noise_model.add_all_qubit_quantum_error(two_qubit_error,
@@ -375,21 +374,43 @@ def estimate_gradient(qubit_graph, gamma, beta, error_probability=0,
     nodes, edges = qubit_graph.nodes, qubit_graph.edges
     num_qubits = len(nodes)
 
-    # For some parameter delta, estimates expected cost gradient.
-    delta = 0.1
-    for parameters_opt in [(gamma, beta), (gamma + delta, beta + delta)]:
-        gamma_opt, beta_opt = parameters_opt
+    ## For some parameter delta, estimates expected cost gradient.
+    if swap_network:
+        circuit = build_swap_circuit(nodes, edges, gamma, beta)
+    else:
+        circuit = build_circuit(nodes, edges, gamma, beta)
+    ####################################################################
+    if num_qubits == 5 and EDGE_PROBABILITY == 1:
+        circuit_image = circuit_drawer(circuit, output="latex")
+        image_filename = "circuit"
+        filepath = "images/" + image_filename + ".jpg"
+        circuit_image.save(filepath)
+    ####################################################################
+    if error_probability > 0:
+        ## bckd = add_noise() if error_probability else QASM_BACKEND
+        depolarizing_noise, counts = add_noise(circuit,
+                                               error_probability)
+    else:
+        # Executes circuit with QASM simulator backend
+        backend = Aer.get_backend("qasm_simulator")
+        qaoa_result = execute(circuit, backend, shots=SHOTS).result()
+        counts = qaoa_result.get_counts()
+    predicted_bitstr, initial_expected_cost, costs = evaluate_data(counts,
+                                                                   qubit_graph)
+    if VERBOSE:
+        print("Predicted bitstring: %s" %
+              predicted_bitstr["bitstr"])
+        print("Cost: %f" % predicted_bitstr["cost"])
+        print("Expected cost (energy): %s" % initial_expected_cost)
+
+    # Gets partial change in cost from given initial cost, using new parameters
+    #  (TODO: remove copypasta above...)
+    def get_gradient_component(opt_parameters, initial_expected_cost):
+        gamma_opt, beta_opt = opt_parameters
         if swap_network:
             circuit = build_swap_circuit(nodes, edges, gamma_opt, beta_opt)
         else:
             circuit = build_circuit(nodes, edges, gamma_opt, beta_opt)
-        ########################################################################
-        if num_qubits == 5 and EDGE_PROBABILITY == 1:
-            circuit_image = circuit_drawer(circuit, output="latex")
-            image_filename = "circuit"
-            filepath = "images/" + image_filename + ".jpg"
-            circuit_image.save(filepath)
-        ########################################################################
         if error_probability > 0:
             ## bckd = add_noise() if error_probability else QASM_BACKEND
             depolarizing_noise, counts = add_noise(circuit,
@@ -401,19 +422,16 @@ def estimate_gradient(qubit_graph, gamma, beta, error_probability=0,
             counts = qaoa_result.get_counts()
         predicted_bitstr, expected_cost, costs = evaluate_data(counts,
                                                                qubit_graph)
+        return (expected_cost - initial_expected_cost) / delta
 
-        # Remembers expected cost for current parameters...
-        if parameters_opt == (gamma, beta):
-            previous_cost = expected_cost
-
-        if VERBOSE:
-            print("Predicted bitstring: %s" %
-                  predicted_bitstr["bitstr"])
-            print("Cost: %f" % predicted_bitstr["cost"])
-            print("Expected cost (energy): %s" % expected_cost)
-
-    gradient = abs(expected_cost - previous_cost) / delta
-    return gradient, previous_cost
+    # Computes gradient vector and retrieves magnitude (Euclidean norm).
+    delta = 0.1
+    gradient = [get_gradient_component([gamma + delta, beta],
+                                       initial_expected_cost),
+                get_gradient_component([gamma, beta + delta],
+                                       initial_expected_cost)]
+    gradient_magnitude = np.sqrt(gradient[0]**2 + gradient[1]**2)
+    return gradient_magnitude, initial_expected_cost
 
 
 def simulate(num_qubits_range, num_trials, error_probability):
