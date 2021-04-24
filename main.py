@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
+import sys
 from qaoa_sim import *
 from datetime import datetime
 from matplotlib.lines import Line2D
 
-def main():
+def main(num_trials):
     """
     Runs main QAOA simultation with various amounts of noise.
     """
@@ -17,7 +18,9 @@ def main():
     #variance_figure = plt.figure()
     gradient_figure = plt.figure(figsize=(8, 4.5))
     num_qubits_range = range(4,10)
-    num_trials = 10
+    if num_trials > 1000:
+        print("Number of trials exceeds 1000. Running 10 trials...")
+        num_trials = 10
     
     # This iterates over each depolarizing error probability to generate a cost
     #  outputs for increasing circuit size (number of qubits). Per circuit size,
@@ -88,4 +91,8 @@ def main():
         plt.savefig(filepath, dpi=240)
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) != 2:
+        print("---> ERROR: Input number of trials...")
+    else:
+        num_trials = int(sys.argv[1])
+        main(num_trials)

@@ -232,7 +232,7 @@ def ZZ(circuit, edge, gamma):
 
 def build_swap_circuit(nodes, edges, gamma_opt, beta_opt):
     """
-    Builds quantum circuit using optimal paramaters, using Fermionic SWAP
+    Builds quantum circuit using optimal parameters, using Fermionic SWAP
      network topology (improving success probability...?).
     """
     
@@ -332,6 +332,22 @@ def evaluate_data(counts, graph):
     return predicted_bitstr, expected_cost, cost_values
 
 
+def executor(program: QuantumCircuit, error_probability) -> float:
+    """
+    Given a quantum program, executes it on some backend.
+    
+    Inputs:
+        program: quantum circuit implementing some program
+        
+    Returns probability of ground state.
+    """
+    noise_model = add_noise(error_probability)
+    result = simulate_noisy(program, noise_model)
+    counts = result.get_counts()
+    ground_state_probability = counts["0"] / SHOTS
+    return ground_state_probability
+
+
 def add_noise(circuit, error_probability):
     """
     Adds depolarizing error channel with given error probability.
@@ -360,6 +376,10 @@ def add_noise(circuit, error_probability):
         print("Noisy backend: %s" % backend)
         print("Shots: %s" % SHOTS)
     noisy_result = execute(circuit, backend, shots=SHOTS).result()
+#    noisy_result = execute(circuit, backend, basis_gates=SINGLE_QUBIT_GATES+TWO_QUBIT_GATES,
+#                           optimization_level=0, noise_model=noise_model,
+#                           shots=SHOTS, seed_transpiler=1,
+#                           seed_simulator=1).result()
     noisy_counts = noisy_result.get_counts()
     if VERBOSE:
         print(SEPS['exit'])
@@ -367,7 +387,7 @@ def add_noise(circuit, error_probability):
 
 
 def estimate_gradient(qubit_graph, gamma, beta, error_probability=0,
-                      swap_network=False):
+                      swap_network=False, mitigate=False):
     """
     Estimates gradient magnitudes (and expected costs) for evaluation.
     """
