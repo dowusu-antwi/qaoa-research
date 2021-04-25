@@ -337,7 +337,7 @@ def evaluate_data(counts, graph):
     return predicted_bitstr, expected_cost, cost_values
 
 
-def executor(program: QuantumCircuit, error_probability, mitigate) -> float:
+def executor(program: QuantumCircuit, error_probability, mitigate):
     """
     Given a quantum program, executes it on some backend.
     
@@ -347,8 +347,7 @@ def executor(program: QuantumCircuit, error_probability, mitigate) -> float:
     Returns sampling counts for circuit execution.
     """
     noise_model, noisy_counts = add_noise(error_probability, mitigate)
-    counts = result.get_counts()
-    return counts
+    return noisy_counts
 
 
 def add_noise(circuit, error_probability, mitigate=False):
@@ -379,7 +378,8 @@ def add_noise(circuit, error_probability, mitigate=False):
         print("Noisy backend: %s" % backend)
         print("Shots: %s" % SHOTS)
     if mitigate:
-        noisy_result = execute(circuit, backend, basis_gates=single_qubit_gates+two_qubit_gates,
+        noisy_result = execute(circuit, backend,
+                               basis_gates=single_qubit_gates+two_qubit_gates,
                                optimization_level=0, noise_model=noise_model,
                                shots=SHOTS, seed_transpiler=1,
                                seed_simulator=1).result()
@@ -413,9 +413,11 @@ def estimate_gradient(qubit_graph, gamma, beta, error_probability=0,
     ####################################################################
     if error_probability > 0:
         if mitigate:
-            counts = zne.execute_with_zne(circuit, lambda circuit: executor(circuit,
-                                                                            error_probability,
-                                                                            mitigate))
+            counts = zne.execute_with_zne(circuit,
+                                          lambda circuit:
+                                              executor(circuit,
+                                                       error_probability,
+                                                       mitigate))
         else:
             ## bckd = add_noise() if error_probability else QASM_BACKEND
             depolarizing_noise, counts = add_noise(circuit,
@@ -481,6 +483,9 @@ def simulate(num_qubits_range, num_trials, error_probability):
                                 num_qubits_range}
     gradient_magnitudes_fermionic = {num_qubits:[] for num_qubits in
                                      num_qubits_range}
+    expected_costs_zne = {num_qubits:[] for num_qubits in num_qubits_range}
+    gradient_magnitudes_zne = {num_qubits:[] for num_qubits in
+                               num_qubits_range}
     for trial in range(num_trials):
         gamma, beta = random() * pi, random() * pi
         for num_qubits in num_qubits_range:
@@ -491,13 +496,21 @@ def simulate(num_qubits_range, num_trials, error_probability):
             expected_cost_fermionic = estimate_gradient(qubit_graph, gamma,
                                                         beta, error_probability,
                                                         swap_network=True)
+            #gradient_zne,\
+            #expected_cost_zne = estimate_gradient(qubit_graph, gamma, beta,
+            #                                      error_probability,
+            #                                      mitigate=True)
+
             expected_costs[num_qubits].append(expected_cost)
             expected_costs_fermionic[num_qubits].append(expected_cost_fermionic)
+            #expected_costs_zne[num_qubits].append(expected_cost_zne)
+
             gradient_magnitudes[num_qubits].append(gradient)
             gradient_magnitudes_fermionic[num_qubits].append(gradient_fermionic)
-    print('=', end='', flush=True) # loading bar...
+            #gradient_magnitudes_zne[num_qubits].append(gradient_zne)
+    print('=', end='', flush=True) # a simple loading bar...
 
-    # Computes variance and mean over number trials.
+    # Computes variance and mean (gradient magnitude) over number trials.
     variances = [np.var(expected_costs[num_qubits])
                  for num_qubits in num_qubits_range]
     variances_fermionic = [np.var(expected_costs_fermionic[num_qubits])
@@ -506,8 +519,10 @@ def simulate(num_qubits_range, num_trials, error_probability):
                            for num_qubits in num_qubits_range]
     gradients_fermionic = [np.mean(gradient_magnitudes_fermionic[num_qubits])
                            for num_qubits in num_qubits_range]
+    #gradients_zne = [np.mean(gradient_magnitudes_zne[num_qubits])
+    #                 for num_qubits in num_qubits_range]
     return variances, gradient_magnitudes, variances_fermionic, \
-           gradients_fermionic
+           gradients_fermionic#, gradients_zne
 
 
 #------------------------------------------------------------------------------#
