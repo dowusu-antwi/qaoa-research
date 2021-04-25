@@ -41,6 +41,11 @@ from qiskit.providers.aer import QasmSimulator
 from qiskit.providers.aer.noise import NoiseModel, depolarizing_error
 print("Qiskit noise tools imported.")
 
+# Imports error mitigation tools
+print("Importing qiskit (mitiq) error mitigation tools...")
+from mitiq import zne
+print("Mitiq error mitigation tools imported.")
+
 ## Useful constants... (e.g., text separators for printing)
 SHOTS = 10000           # number of execution repetitions, for sampling
 EDGE_PROBABILITY = 0.5  # for building random connectivity graph (erdos-renyi)
@@ -332,23 +337,21 @@ def evaluate_data(counts, graph):
     return predicted_bitstr, expected_cost, cost_values
 
 
-def executor(program: QuantumCircuit, error_probability) -> float:
+def executor(program: QuantumCircuit, error_probability, mitigate) -> float:
     """
     Given a quantum program, executes it on some backend.
     
     Inputs:
         program: quantum circuit implementing some program
         
-    Returns probability of ground state.
+    Returns sampling counts for circuit execution.
     """
-    noise_model = add_noise(error_probability)
-    result = simulate_noisy(program, noise_model)
+    noise_model, noisy_counts = add_noise(error_probability, mitigate)
     counts = result.get_counts()
-    ground_state_probability = counts["0"] / SHOTS
-    return ground_state_probability
+    return counts
 
 
-def add_noise(circuit, error_probability):
+def add_noise(circuit, error_probability, mitigate=False):
     """
     Adds depolarizing error channel with given error probability.
     """
@@ -375,11 +378,13 @@ def add_noise(circuit, error_probability):
         print("Executing circuit with noisy QASM...")
         print("Noisy backend: %s" % backend)
         print("Shots: %s" % SHOTS)
-    noisy_result = execute(circuit, backend, shots=SHOTS).result()
-#    noisy_result = execute(circuit, backend, basis_gates=SINGLE_QUBIT_GATES+TWO_QUBIT_GATES,
-#                           optimization_level=0, noise_model=noise_model,
-#                           shots=SHOTS, seed_transpiler=1,
-#                           seed_simulator=1).result()
+    if mitigate:
+        noisy_result = execute(circuit, backend, basis_gates=single_qubit_gates+two_qubit_gates,
+                               optimization_level=0, noise_model=noise_model,
+                               shots=SHOTS, seed_transpiler=1,
+                               seed_simulator=1).result()
+    else:
+        noisy_result = execute(circuit, backend, shots=SHOTS).result()
     noisy_counts = noisy_result.get_counts()
     if VERBOSE:
         print(SEPS['exit'])
@@ -407,9 +412,14 @@ def estimate_gradient(qubit_graph, gamma, beta, error_probability=0,
         circuit_image.save(filepath)
     ####################################################################
     if error_probability > 0:
-        ## bckd = add_noise() if error_probability else QASM_BACKEND
-        depolarizing_noise, counts = add_noise(circuit,
-                                               error_probability)
+        if mitigate:
+            counts = zne.execute_with_zne(circuit, lambda circuit: executor(circuit,
+                                                                            error_probability,
+                                                                            mitigate))
+        else:
+            ## bckd = add_noise() if error_probability else QASM_BACKEND
+            depolarizing_noise, counts = add_noise(circuit,
+                                                   error_probability)
     else:
         # Executes circuit with QASM simulator backend
         backend = Aer.get_backend("qasm_simulator")
@@ -432,9 +442,12 @@ def estimate_gradient(qubit_graph, gamma, beta, error_probability=0,
         else:
             circuit = build_circuit(nodes, edges, gamma_opt, beta_opt)
         if error_probability > 0:
-            ## bckd = add_noise() if error_probability else QASM_BACKEND
-            depolarizing_noise, counts = add_noise(circuit,
-                                                   error_probability)
+            if mitigate:
+                counts = zne.execute_with_zne(circuit, executor)
+            else:
+                ## bckd = add_noise() if error_probability else QASM_BACKEND
+                depolarizing_noise, counts = add_noise(circuit,
+                                                       error_probability)
         else:
             # Executes circuit with QASM simulator backend
             backend = Aer.get_backend("qasm_simulator")
