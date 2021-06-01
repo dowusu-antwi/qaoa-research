@@ -12,6 +12,7 @@ author: dowusu
 # Useful imports...
 ###############################################################################
 import sys
+from pickle import dump, load
 
 # Imports necessary graph and plotting tools
 print("Importing plotting tools (from numpy, networkx, matplotlib, etc.)...")
@@ -27,7 +28,7 @@ print("Plotting tools imported.")
 
 # Imports necessary qiskit tools to build and execute on IBMQ
 print("Importing standard qiskit tools...")
-from qiskit import Aer, IBMQ
+from qiskit import Aer, IBMQ, transpile
 from qiskit import QuantumRegister, ClassicalRegister, QuantumCircuit, execute
 from qiskit.providers.ibmq import least_busy
 from qiskit.tools.monitor import job_monitor
@@ -44,11 +45,18 @@ print("Qiskit noise tools imported.")
 # Imports error mitigation tools
 print("Importing qiskit (mitiq) error mitigation tools...")
 from mitiq import zne
+from mitiq.zne.inference import PolyFactory
+from mitiq.zne.scaling import fold_gates_from_left, fold_gates_from_right
 print("Mitiq error mitigation tools imported.")
 
 ## Useful constants... (e.g., text separators for printing)
+FOLDING_BASIS_1Q = ["rx", "rz"]
+FOLDING_BASIS_2Q = ["cx"]
+QISKIT_BASIS_1Q = ["p", "rx"]
+QISKIT_BASIS_2Q = ["cp"]
 SHOTS = 10000           # number of execution repetitions, for sampling
 EDGE_PROBABILITY = 0.5  # for building random connectivity graph (erdos-renyi)
+FIXED_WIDTH = 5         # circuit width for rounds calculation
 SEP = "=" * 100
 SEPS = {'enter': "=" * 10 + " ENTERING FUNCTION " + "=" * 10,
         'exit': "=" * 10 + " EXITING FUNCTION " + "=" * 10}
@@ -112,7 +120,8 @@ def get_optimal_butterfly():
     Evaluates expectation, using grid search to find optimal parameters
       maximizing its value.
     """
-    # Evaluates expectation via considering connectivity of butterfly graph
+    # Evaluates expectation via considering connectivity of butterfly graph,
+    #  using hard-coded analytic expectation.
     step = 0.1
     gamma_grid, beta_grid = build_param_space(step)
     expectation = 3 - (np.sin(2 * beta_grid)**2 * np.sin(2 * gamma_grid)**2 \
@@ -167,6 +176,7 @@ def build_erdos_renyi(num_qubits, edge_probability):
     Builds Erdos-Renyi graph (random graph) representing connectivity.
     """
     # Builds Erdos-Renyi graph (random graph)
+    print("NUM QUBITS: ", num_qubits)
     random_graph = nx.erdos_renyi_graph(num_qubits, edge_probability)
     nodes, edges = list(random_graph.nodes), list(random_graph.edges)
     
@@ -185,6 +195,7 @@ def draw_nx_graph(graph):
     node_colors = ['y'] * len(graph.nodes)
     NODE_SIZE = 400
     TRANSPARENCY = 0
+    plt.figure()
     default_axes = plt.axes(frameon=False)
     optimal_node_positioning = nx.spring_layout(graph)
     nx.draw_networkx(graph, node_color=node_colors, node_size=NODE_SIZE, 
@@ -202,23 +213,24 @@ def Ising(circuit, edge, gamma):
     circuit.p(gamma, right_qubit)
 
 
-def build_circuit(nodes, edges, gamma_opt, beta_opt):
+def basic_qaoa_circuit(nodes, edges, gamma_opt, beta_opt, rounds):
     """
-    Builds quantum circuit to prepare trial state, using optimal parameters
+    Builds QAOA circuit using problem ansatz (see arxiv 1411.4028).
     """
     # Builds empty circuit and initializes all qubits into superposition
     num_qubits = len(nodes)
     circuit = QuantumCircuit(num_qubits, num_qubits)
     circuit.h(nodes)
 
-    # Applies circuit connectivity with Ising type gates
-    circuit.barrier()
-    for edge in edges:
-        Ising(circuit, edge, gamma_opt)
+    for optimization_round in range(rounds):
+        # Applies circuit connectivity with Ising type gates
+        #circuit.barrier()
+        for edge in edges:
+            Ising(circuit, edge, gamma_opt)
 
-    # Applies single qubit rotations to generate final state evolution 
-    circuit.barrier()
-    circuit.rx(2 * beta_opt, nodes)
+        # Applies single qubit rotations to generate final state evolution 
+        #circuit.barrier()
+        circuit.rx(2 * beta_opt, nodes)
     
     # Adds qubit measurements 
     circuit.measure_all()
@@ -235,7 +247,7 @@ def ZZ(circuit, edge, gamma):
     circuit.cx(right_qubit, left_qubit)
 
 
-def build_swap_circuit(nodes, edges, gamma_opt, beta_opt):
+def fermionic_swap_circuit(nodes, edges, gamma_opt, beta_opt):
     """
     Builds quantum circuit using optimal parameters, using Fermionic SWAP
      network topology (improving success probability...?).
@@ -250,7 +262,7 @@ def build_swap_circuit(nodes, edges, gamma_opt, beta_opt):
     #  SWAP network topology. Given N qubits in our circuit, per step we
     #  alternate between swapping the first floor(N/2) pairs and the last
     #  floor(N/2) pairs, stopping after N steps (N * floor(N/2) swaps).
-    circuit.barrier()
+    #circuit.barrier()
     step = 0
     while step < num_qubits:
         pairs = [(idx, idx + 1) for idx in range(0, num_qubits // 2 + 2, 2)]
@@ -270,12 +282,39 @@ def build_swap_circuit(nodes, edges, gamma_opt, beta_opt):
         step += 1
 
     # Applies single qubit rotations to generate final state evolution 
-    circuit.barrier()
+    #circuit.barrier()
     circuit.rx(2 * beta_opt, nodes)
     
     # Adds qubit measurements 
     circuit.measure_all()
     return circuit
+
+
+def build_circuit(nodes, edges, gamma_opt, beta_opt, swap_network=False,
+                  rounds=1):
+    """
+    Builds quantum circuit to prepare trial state, using optimal parameters.
+    """
+    if swap_network:
+        return fermionic_swap_circuit(nodes, edges, gamma_opt, beta_opt)
+    return basic_qaoa_circuit(nodes, edges, gamma_opt, beta_opt, rounds)
+
+
+def save_circuit(circuit, image_filename, pickle=False):
+    """
+    Saves circuit to a JPEG and a pickle file for debugging.
+
+    Inputs:
+     circuit (QuantumCircuit): quantum circuit instance,
+     image_filename (str): name to save circuit under.
+
+    No return.
+    """
+    circuit_image = circuit_drawer(circuit, output="latex") 
+    filepath = "images/" + image_filename + ".jpg"
+    circuit_image.save(filepath)
+    if pickle:
+        dump(circuit, open(image_filename + ".p", "wb"))
 
 
 # Defines cost function to compute cost given bitstring, to determine
@@ -304,20 +343,21 @@ def evaluate_cost(graph, bitstr):
     return cost
 
 
-def evaluate_data(counts, graph):
+def evaluate_data(counts, qubit_graph):
     """
-    Performs evaluation of generated data.
+    Performs evaluation of generated data, computing predicted bitstring (i.e.,
+     that with maximum cost) and expected cost of sampled bitstrings.
     """ 
     # Reports sampled bitstring with maximum cost value
+    num_qubits = len(qubit_graph.nodes)
     samples = counts.keys()
     predicted_bitstr = {"bitstr": None, "cost": None}
     expected_cost = 0
     cost_values = {}
-    num_qubits = len(graph.nodes)    
 
     for sample in samples:
         bitstr = sample[:num_qubits] # (?) sampled bitstring 2x qubits long...
-        cost = evaluate_cost(graph, bitstr)
+        cost = evaluate_cost(qubit_graph, bitstr)
         current_max_cost = predicted_bitstr["cost"]
         if ((predicted_bitstr["bitstr"] == None) or 
             (cost > current_max_cost)):
@@ -337,192 +377,385 @@ def evaluate_data(counts, graph):
     return predicted_bitstr, expected_cost, cost_values
 
 
-def executor(program: QuantumCircuit, error_probability, mitigate):
+def build_backend(error_probability=0):
+    """
+    Builds a (potentiall noisy) backend.
+
+    Inputs:
+     error_probability (float): level of noise to build noise model with
+
+    Returns a quantum backend (i.e., QasmSimulator).
+    """
+    model = get_noise_model(error_probability)
+    backend = (QasmSimulator(noise_model=model)
+               if error_probability > 0 else QasmSimulator())
+    return backend
+
+
+def executor(circuit, backend, decomposed=False):
     """
     Given a quantum program, executes it on some backend.
     
     Inputs:
-        program: quantum circuit implementing some program
+        circuit: quantum circuit implementing some program
+        backend: simulator to execute circuit on
         
     Returns sampling counts for circuit execution.
     """
-    noise_model, noisy_counts = add_noise(error_probability, mitigate)
-    return noisy_counts
+
+    if VERBOSE:
+        print(f"Executing circuit with QASM, {SHOTS} shots...")
+
+    # Only execute circuits decomposed into preset basis.
+    BASIS = FOLDING_BASIS_1Q + FOLDING_BASIS_2Q
+    if not decomposed: 
+        circuit = transpile(circuit, backend, basis_gates=BASIS)
+    job = execute(circuit,
+                  backend,
+                  basis_gates=BASIS,
+                  optimization_level=0,
+                  shots=SHOTS)
+    #job = execute(circuit, backend, shots=SHOTS) #<- basic execution
+    counts = job.result().get_counts()
+    return counts
 
 
-def add_noise(circuit, error_probability, mitigate=False):
+def get_noise_model(error_probability):
     """
     Adds depolarizing error channel with given error probability.
     """
     if VERBOSE:
-        print(SEPS['enter'])
         print("Adding depolarizing error channel with %s error..."
               % error_probability)
+
+    single_qubit_gates = FOLDING_BASIS_1Q
+    two_qubit_gates = FOLDING_BASIS_2Q
+
     noise_model = NoiseModel()
     single_qubit_error = depolarizing_error(error_probability, 1)
     two_qubit_error = depolarizing_error(error_probability, 2)
-
-    single_qubit_gates = ["p", "rx"]    # p <- u1
-    two_qubit_gates = ["cp"]            # cp <- cu1
     noise_model.add_all_qubit_quantum_error(single_qubit_error,
                                             single_qubit_gates)
     noise_model.add_all_qubit_quantum_error(two_qubit_error,
                                             two_qubit_gates)
-    #noise_model.add_quantum_error(error, ['p', 'u2', 'u3'], [0])
-    #noise_model.add_nonlocal_quantum_error(error, ['p', 'u2', 'u3'], [0], [2]) 
+    return noise_model
 
-    # Executes circuit with noisy QASM simulator
-    backend = QasmSimulator(noise_model=noise_model)
+
+def fold_circuit(circuit, scale_factor, backend):
+    """
+    Applies unitary folding to given circuit, until scale factor is reached. 
+    """
     if VERBOSE:
-        print("Executing circuit with noisy QASM...")
-        print("Noisy backend: %s" % backend)
-        print("Shots: %s" % SHOTS)
-    if mitigate:
-        noisy_result = execute(circuit, backend,
-                               basis_gates=single_qubit_gates+two_qubit_gates,
-                               optimization_level=0, noise_model=noise_model,
-                               shots=SHOTS, seed_transpiler=1,
-                               seed_simulator=1).result()
-    else:
-        noisy_result = execute(circuit, backend, shots=SHOTS).result()
-    noisy_counts = noisy_result.get_counts()
-    if VERBOSE:
-        print(SEPS['exit'])
-    return noise_model, noisy_counts
+        print("Folding from left with scale factor %s..." % scale_factor)
+    
+    FOLDING_BASIS = FOLDING_BASIS_1Q + FOLDING_BASIS_2Q 
+    decomposed_circuit = transpile(circuit, backend, basis_gates=FOLDING_BASIS)
+    save_circuit(decomposed_circuit, "circuit_for_debugging", pickle=True)
+    # For now, using fold_gates_from_right -- it returns the same circuit every
+    #  time, and we need this to compute the gradients for different parameters
+    #  but identical circuits).
+    return fold_gates_from_right(decomposed_circuit, scale_factor)
+
+
+def compute_cost_difference(qubit_graph, parameters, initial_expected_cost,
+                            backend,
+                            swap_network,
+                            fold_scale_factor=0,
+                            rounds=1):
+    """ 
+    Gets partial change in cost from given initial cost, using new parameters.
+
+    Inputs:
+     qubit_graph: qubit program interaction graph,
+     parameters: gate parameters,
+     initial_expected_cost (float):
+     swap_network: indicates whether a swap network circuit should be built,
+     fold_scale_factor (int):
+
+    Returns difference between newly computed expected cost and initial value.
+    """
+    nodes, edges = qubit_graph.nodes, qubit_graph.edges
+    gamma, beta = parameters
+    circuit = build_circuit(nodes, edges, gamma, beta, swap_network, rounds)
+    if fold_scale_factor > 1.0:
+        circuit = fold_circuit(circuit, fold_scale_factor, backend)
+    counts = executor(circuit, backend,
+                      decomposed=(fold_scale_factor > 1.0))
+    _, expected_cost, _ = evaluate_data(counts, qubit_graph)
+    return expected_cost - initial_expected_cost
+
+
+
+def compute_gradient_magnitude(qubit_graph, parameters, initial_expected_cost,
+                               backend,
+                               swap_network,
+                               fold_scale_factor=0,
+                               rounds=1):
+    """
+    Computes gradient vector and retrieves magnitude (Euclidean norm).
+    """
+    gamma, beta = parameters
+    PARAMETER_DELTA = 0.1
+    gamma_difference = compute_cost_difference(qubit_graph,
+                                               [gamma + PARAMETER_DELTA,
+                                                beta],
+                                               initial_expected_cost,
+                                               backend,
+                                               swap_network,
+                                               fold_scale_factor,
+                                               rounds)
+    beta_difference = compute_cost_difference(qubit_graph,
+                                              [gamma,
+                                               beta + PARAMETER_DELTA],
+                                              initial_expected_cost,
+                                              backend,
+                                              swap_network,
+                                              fold_scale_factor,
+                                              rounds)
+    gradient = [gamma_difference / PARAMETER_DELTA,
+                beta_difference / PARAMETER_DELTA]
+    gradient_magnitude = np.sqrt(gradient[0]**2 + gradient[1]**2)
+    return gradient_magnitude
 
 
 def estimate_gradient(qubit_graph, gamma, beta, error_probability=0,
-                      swap_network=False, mitigate=False):
+                      swap_network=False, zne=False,
+                      extrapolator=None, rounds=1):
     """
     Estimates gradient magnitudes (and expected costs) for evaluation.
     """
     nodes, edges = qubit_graph.nodes, qubit_graph.edges
     num_qubits = len(nodes)
 
-    ## For some parameter delta, estimates expected cost gradient.
-    if swap_network:
-        circuit = build_swap_circuit(nodes, edges, gamma, beta)
-    else:
-        circuit = build_circuit(nodes, edges, gamma, beta)
-    ####################################################################
+    # Executes circuit with QASM simulator backend
+    circuit = build_circuit(nodes, edges, gamma, beta, swap_network, rounds)
+    ############################################################################
+    # Saves image of 5-qubit circuit generation, to compare with Pranav/Teague
+    #  paper results for completely connected 5-qubit graph...
     if num_qubits == 5 and EDGE_PROBABILITY == 1:
-        circuit_image = circuit_drawer(circuit, output="latex")
-        image_filename = "circuit"
-        filepath = "images/" + image_filename + ".jpg"
-        circuit_image.save(filepath)
-    ####################################################################
-    if error_probability > 0:
-        if mitigate:
-            counts = zne.execute_with_zne(circuit,
-                                          lambda circuit:
-                                              executor(circuit,
-                                                       error_probability,
-                                                       mitigate))
+        save_circuit(circuit, "pranav-teague-circuit")
+    ###########################################################################
+    backend = build_backend(error_probability)
+    counts = executor(circuit, backend)
+    _, initial_expected_cost, _ = evaluate_data(counts, qubit_graph) 
+
+    gradient_magnitude = compute_gradient_magnitude(qubit_graph,
+                                                    [gamma, beta],
+                                                    initial_expected_cost,
+                                                    backend,
+                                                    swap_network,
+                                                    rounds)
+    if not zne:
+        return gradient_magnitude, initial_expected_cost
+
+    # Applies unitary folding to generate gradient magnitudes and subsequently
+    #  extrapolates magnitudes to zero-noise case.
+    #
+    # Note: we can use the same qubit graph to evaluate sampled data, given that
+    #  unitary folding only expands the circuit by gates that cancel to the
+    #  identity (recall that we only want to see how adding noise in circuit
+    #  execution affects the sampling results).
+    noise_scalars = [0, 1.0, 2.0, 3.0]
+    folding_magnitudes = []
+    for scale_factor in noise_scalars:
+        if scale_factor == 0:
+            ZERO_NOISE_LEVEL = 0
+            backend = build_backend(ZERO_NOISE_LEVEL)
+            counts = executor(circuit, backend)
+        elif scale_factor == 1.0:
+            folding_magnitudes.append(gradient_magnitude)
+            continue
         else:
-            ## bckd = add_noise() if error_probability else QASM_BACKEND
-            depolarizing_noise, counts = add_noise(circuit,
-                                                   error_probability)
-    else:
-        # Executes circuit with QASM simulator backend
-        backend = Aer.get_backend("qasm_simulator")
-        qaoa_result = execute(circuit, backend, shots=SHOTS).result()
-        counts = qaoa_result.get_counts()
-    predicted_bitstr, initial_expected_cost, costs = evaluate_data(counts,
-                                                                   qubit_graph)
-    if VERBOSE:
-        print("Predicted bitstring: %s" %
-              predicted_bitstr["bitstr"])
-        print("Cost: %f" % predicted_bitstr["cost"])
-        print("Expected cost (energy): %s" % initial_expected_cost)
+            backend = build_backend(error_probability)
+            folded_circuit = fold_circuit(circuit, scale_factor, backend)
+            counts = executor(folded_circuit, backend, decomposed=True)
+        _, init_expec_cost, _ = evaluate_data(counts, qubit_graph)
+        folding_gradient_magnitude = compute_gradient_magnitude(qubit_graph,
+                                                                [gamma, beta],
+                                                                init_expec_cost,
+                                                                backend,
+                                                                swap_network,
+                                                                scale_factor)
+        folding_magnitudes.append(folding_gradient_magnitude)
 
-    # Gets partial change in cost from given initial cost, using new parameters
-    #  (TODO: remove copypasta above...)
-    def get_gradient_component(opt_parameters, initial_expected_cost):
-        gamma_opt, beta_opt = opt_parameters
-        if swap_network:
-            circuit = build_swap_circuit(nodes, edges, gamma_opt, beta_opt)
-        else:
-            circuit = build_circuit(nodes, edges, gamma_opt, beta_opt)
-        if error_probability > 0:
-            if mitigate:
-                counts = zne.execute_with_zne(circuit, executor)
-            else:
-                ## bckd = add_noise() if error_probability else QASM_BACKEND
-                depolarizing_noise, counts = add_noise(circuit,
-                                                       error_probability)
-        else:
-            # Executes circuit with QASM simulator backend
-            backend = Aer.get_backend("qasm_simulator")
-            qaoa_result = execute(circuit, backend, shots=SHOTS).result()
-            counts = qaoa_result.get_counts()
-        predicted_bitstr, expected_cost, costs = evaluate_data(counts,
-                                                               qubit_graph)
-        return (expected_cost - initial_expected_cost) / delta
-
-    # Computes gradient vector and retrieves magnitude (Euclidean norm).
-    delta = 0.1
-    gradient = [get_gradient_component([gamma + delta, beta],
-                                       initial_expected_cost),
-                get_gradient_component([gamma, beta + delta],
-                                       initial_expected_cost)]
-    gradient_magnitude = np.sqrt(gradient[0]**2 + gradient[1]**2)
-    return gradient_magnitude, initial_expected_cost
+    # Extrapolates computed gradient magnitudes to zero-noise limit (np.polyfit,
+    #  under the hood; see https://mitiq.readthedocs.io
+    zne_magnitude = extrapolator.extrapolate(noise_scalars[1:],
+                                             folding_magnitudes[1:],
+                                             order=2)
+    return *folding_magnitudes, zne_magnitude
 
 
-def simulate(num_qubits_range, num_trials, error_probability):
+def update_gradient_data(input_size, parameters, noise_level, data_spaces,
+                         extrapolator=None,
+                         sim_conditions={"nibp": False,
+                                         "fermionic": False,
+                                         "zne": False,
+                                         "rounds": False}):
+    """
+    Computes expected costs and gradient magnitude data, storing in dictionary
+     data structures.
+
+    noise_level: probability of depolarization error
+    """
+
+    # Parses simulation conditions, determining which blocks of data to compute.
+    nibp_condition = sim_conditions["nibp"]
+    fermionic_condition = sim_conditions["fermionic"]
+    zne_condition = sim_conditions["zne"]
+    rounds_condition = sim_conditions["rounds"]
+    if not (nibp_condition or fermionic_condition
+         or zne_condition or rounds_condition):
+        print("No conditions are set to true -- no computation scheduled.")
+        return False 
+
+    gamma, beta = parameters
+    if nibp_condition or fermionic_condition or zne_condition:
+        num_qubits = input_size
+        qubit_graph = build_erdos_renyi(num_qubits, EDGE_PROBABILITY)
+
+    if nibp_condition:
+        expected_cost_data, gradient_magnitude_data = data_spaces
+        grad_magnitude, expected_cost = estimate_gradient(qubit_graph,
+                                                          gamma,
+                                                          beta,
+                                                          noise_level)
+        expected_cost_data["standard"][num_qubits].append(expected_cost)
+        gradient_magnitude_data["standard"][num_qubits].append(grad_magnitude)
+
+    if fermionic_condition:
+        expected_cost_data, gradient_magnitude_data = data_spaces
+        grad_magnitude, expected_cost = estimate_gradient(qubit_graph,
+                                                          gamma,
+                                                          beta,
+                                                          noise_level,
+                                                          swap_network=True)
+        expected_cost_data["fermionic"][num_qubits].append(expected_cost)
+        gradient_magnitude_data["fermionic"][num_qubits].append(grad_magnitude)
+
+    if zne_condition:
+        expected_cost_data, gradient_magnitude_data = data_spaces
+        gradient_mags = estimate_gradient(qubit_graph,
+                                          gamma,
+                                          beta,
+                                          noise_level,
+                                          zne=True,
+                                          extrapolator=extrapolator)
+        noise_free, no_fold, double_fold, triple_fold, zne_mag = gradient_mags
+        gradient_magnitude_data["standard"][num_qubits].append(noise_free)
+        gradient_magnitude_data["no fold"][num_qubits].append(no_fold)
+        gradient_magnitude_data["double fold"][num_qubits].append(double_fold)
+        gradient_magnitude_data["triple fold"][num_qubits].append(triple_fold)
+        gradient_magnitude_data["zne"][num_qubits].append(zne_mag)
+
+    if rounds_condition:
+        num_rounds = input_size
+        rounds_data, qubit_graph = data_spaces
+        gradient_mags = estimate_gradient(qubit_graph,
+                                          gamma,
+                                          beta,
+                                          noise_level,
+                                          #zne=True,
+                                          extrapolator=extrapolator,
+                                          rounds=num_rounds)
+        gradient_magnitude, expected_cost = gradient_mags
+        rounds_data["standard-rounds"][num_rounds].append(gradient_magnitude)
+        rounds_data["variances"][num_rounds].append(expected_cost)
+        #rounds_data["zne-rounds"][num_rounds].append(zne_mag)
+
+    return True
+
+
+def get_data_space(data_key, simulation_conditions, input_range):
+    """
+    Gets space of data to later fill with computed data, depending on simulation
+     conditions.
+
+    Inputs:
+     data_key: a key to the dataset dictionary,
+     simulation_conditions: conditions determining which data to compute,
+     input_range: range of input over which to define empty data dictionary,
+                  mapping inputs to an empty list of outputs.
+
+    Returns a dictionary mapping integers to empty lists, or None.
+    """
+    
+    # Parses simulation conditions, determining which blocks of data to compute.
+    nibp_condition = simulation_conditions["nibp"]
+    fermionic_condition = simulation_conditions["fermionic"]
+    zne_condition = simulation_conditions["zne"]
+    rounds_condition = simulation_conditions["rounds"]
+    if not (nibp_condition
+         or fermionic_condition
+         or zne_condition
+         or rounds_condition):
+        return None
+
+    NIBP_KEYS = {"standard"}
+    FERMIONIC_KEYS = {"fermionic"}
+    ZNE_KEYS = {"standard", "no fold", "double fold", "triple fold", "zne"}
+    ROUNDS_KEYS = {"standard-rounds", "variances", "zne-rounds"}
+
+    if ((data_key in NIBP_KEYS and nibp_condition) or
+        (data_key in FERMIONIC_KEYS and fermionic_condition) or
+        (data_key in ZNE_KEYS and zne_condition) or
+        (data_key in ROUNDS_KEYS and rounds_condition)):
+        data_dict = {step: [] for step in input_range}
+        return data_dict
+
+
+def simulate(input_ranges, num_trials, error_probability, sim_conditions,
+             fixed_qubit_graph):
     """
     Simulates circuit and evaluates data for some number of trials, returning
-      expected costs.
+     expected costs and gradient magnitudes.
     """
     # Over some number of trials, simulates quantum circuit(s), possibly in the
     #  presence of noise, and computes gradient and expected cost values for
-    #  later plotting. 
-    expected_costs = {num_qubits:[] for num_qubits in num_qubits_range}
-    gradient_magnitudes = {num_qubits:[] for num_qubits in num_qubits_range}
-    expected_costs_fermionic = {num_qubits:[] for num_qubits in
-                                num_qubits_range}
-    gradient_magnitudes_fermionic = {num_qubits:[] for num_qubits in
-                                     num_qubits_range}
-    expected_costs_zne = {num_qubits:[] for num_qubits in num_qubits_range}
-    gradient_magnitudes_zne = {num_qubits:[] for num_qubits in
-                               num_qubits_range}
+    #  later plotting.
+    num_qubits_range, num_rounds_range = input_ranges
+    expected_cost_keys = ["standard", "fermionic"]
+    nibps_keys = ["standard", "fermionic", "no fold",
+                  "double fold", "triple fold", "zne"]
+    rounds_keys = ["standard-rounds", "variances", "zne-rounds"] 
+    expected_cost_data = {key: get_data_space(key, sim_conditions,
+                                              num_qubits_range)
+                          for key in expected_cost_keys}
+    gradient_magnitude_data = {key: get_data_space(key, sim_conditions,
+                                                   num_qubits_range)
+                               for key in nibps_keys}
+    rounds_data = {key: get_data_space(key, sim_conditions, num_rounds_range)
+                   for key in rounds_keys}
+
+    poly_factory = PolyFactory(scale_factors=[1.0, 2.0, 3.0], order=2)
     for trial in range(num_trials):
         gamma, beta = random() * pi, random() * pi
+        new_conditions = {key: value for key, value in sim_conditions.items()}
+        new_conditions["rounds"] = False
         for num_qubits in num_qubits_range:
-            qubit_graph = build_erdos_renyi(num_qubits, EDGE_PROBABILITY)
-            gradient, expected_cost = estimate_gradient(qubit_graph, gamma,
-                                                        beta, error_probability)
-            gradient_fermionic,\
-            expected_cost_fermionic = estimate_gradient(qubit_graph, gamma,
-                                                        beta, error_probability,
-                                                        swap_network=True)
-            #gradient_zne,\
-            #expected_cost_zne = estimate_gradient(qubit_graph, gamma, beta,
-            #                                      error_probability,
-            #                                      mitigate=True)
+            parameters = (gamma, beta)
+            data_spaces = (expected_cost_data, gradient_magnitude_data)
+            executed = update_gradient_data(num_qubits, parameters,
+                                            error_probability,
+                                            data_spaces,
+                                            extrapolator=poly_factory,
+                                            sim_conditions=new_conditions)
+            if not executed:
+                print("No data was computed (check conditions).")
+    
+        for num_rounds in num_rounds_range:
+            parameters = (gamma, beta)
+            data_spaces = rounds_data, fixed_qubit_graph
+            executed = update_gradient_data(num_rounds, parameters,
+                                            error_probability,
+                                            data_spaces,
+                                            extrapolator=poly_factory,
+                                            sim_conditions=sim_conditions)
+            if not executed:
+                print("No data was computed (check conditions).")
 
-            expected_costs[num_qubits].append(expected_cost)
-            expected_costs_fermionic[num_qubits].append(expected_cost_fermionic)
-            #expected_costs_zne[num_qubits].append(expected_cost_zne)
-
-            gradient_magnitudes[num_qubits].append(gradient)
-            gradient_magnitudes_fermionic[num_qubits].append(gradient_fermionic)
-            #gradient_magnitudes_zne[num_qubits].append(gradient_zne)
     print('=', end='', flush=True) # a simple loading bar...
-
-    # Computes variance and mean (gradient magnitude) over number trials.
-    variances = [np.var(expected_costs[num_qubits])
-                 for num_qubits in num_qubits_range]
-    variances_fermionic = [np.var(expected_costs_fermionic[num_qubits])
-                           for num_qubits in num_qubits_range]
-    gradient_magnitudes = [np.mean(gradient_magnitudes[num_qubits])
-                           for num_qubits in num_qubits_range]
-    gradients_fermionic = [np.mean(gradient_magnitudes_fermionic[num_qubits])
-                           for num_qubits in num_qubits_range]
-    #gradients_zne = [np.mean(gradient_magnitudes_zne[num_qubits])
-    #                 for num_qubits in num_qubits_range]
-    return variances, gradient_magnitudes, variances_fermionic, \
-           gradients_fermionic#, gradients_zne
+    return expected_cost_data, gradient_magnitude_data, rounds_data
 
 
 #------------------------------------------------------------------------------#
@@ -532,27 +765,23 @@ def basic_simulate(nodes, edges, gamma_opt, beta_opt, noisy=False,
     Runs simulation on circuit given by set of qubits (nodes) and connectivity
      (edges), using given optimal parameters. 
     """
+    num_qubits = len(nodes)
+
     # Builds quantum circuit to prepare trial state, using optimal parameters
-    if swap_network:
-        circuit = build_swap_circuit(nodes, edges, gamma_opt, beta_opt)
-    else:
-        circuit = build_circuit(nodes, edges, gamma_opt, beta_opt)
-    circuit_image = circuit_drawer(circuit, output="latex")
-    image_filename = "circuit.jpg" if not noisy else "noisy_circuit.jpg"
-    circuit_image.save(image_filename)
+    circuit = build_circuit(nodes, edges, gamma_opt, beta_opt, swap_network)
+    filename = "noisy_basic_circuit" if noisy else "basic_circuit"
+    save_circuit(circuit, filename)
     
     # Executes circuit with QASM simulator backend and plots results
-    backend = Aer.get_backend("qasm_simulator")
-    qaoa_result = execute(circuit, backend, shots=SHOTS).result()
-    counts = qaoa_result.get_counts()
-    if PLOT:
-        plot_histogram(counts, bar_labels=False)
-        show("noiseless bitstring probabilities")
-    
-    # Adds depolarizing error channel with probabiltiy 0.001
-    if noisy:
+    if not noisy:
+        counts = executor(circuit)
+        if PLOT:
+            plot_histogram(counts, bar_labels=False)
+            show("noiseless bitstring probabilities")
+    else:
+        # Adds depolarizing error channel with probabiltiy 0.001
         error_probability = 0.001
-        noise_model, counts = add_noise(circuit, error_probability)
+        counts = executor(circuit, error_probability=error_probability)
 
     # Evaluates data...
     predicted_bitstr, expected_cost, cost_values = evaluate_data(counts,
