@@ -267,7 +267,8 @@ def plot_zne_demo_full(datasets, num_qubits_range, sim_condition,
             print(f"Plotted {data_key} in color {PLOT_COLORS[index]}")
 
         # Adds informative labeling (title, legend, axes labels) to plot.
-        axis[a, b].set(title=f"Depolarization Probability = {int(noise_level * 100)}%",
+        zne_title = f"Depolarization Probability = {int(noise_level * 100)}%"
+        axis[a, b].set(title=zne_title,
                        xlabel="Circuit Width (Node Count)",
                        ylabel=r"Average |$\partial C_{\gamma\beta}$|")
 
@@ -281,6 +282,10 @@ def plot_zne_demo_full(datasets, num_qubits_range, sim_condition,
                                    loc='center right',
                                    handlelength=3)
     plt.subplots_adjust(hspace=0.5, right=0.8, left=0.07)
+
+    recovery_error = np.mean([abs(avg_grad_magnitudes_per_noise[0.03]['standard'][i] - avg_grad_magnitudes_per_noise[0.03]['zne'][i]) for i in range(6)])
+    datasets['recovery error'] = recovery_error
+
     return figure
 
 
@@ -291,7 +296,8 @@ def plot_folding(datasets, num_qubits_range, noise_level=None):
     figure, axis = plt.subplots(2, 2)
     #all_figure = plt.figure()
 
-    MARKERSIZE=7
+    MARKERSIZE = 7
+    MEW = 4 #marker edge width
 
     NUM_QUBITS = 5
     n_qubits_index = num_qubits_range.index(NUM_QUBITS)
@@ -320,30 +326,34 @@ def plot_folding(datasets, num_qubits_range, noise_level=None):
 
         # Sets titles and labels for axis subplot, growing list of legend
         #  marker elements (actually, legend markers hard-coded below instead..)
-        axis[a, b].set_title(f"Noise Level (Depolarization Probability) = {int(noise_level * 100)}%")
+        fold_title = f"Depolarization Probability = {int(noise_level * 100)}%"
+        axis[a, b].set_title(fold_title)
         axis[a, b].set(xlabel="Noise Scaling Factor",
                        ylabel=r"$|\partial C_{\gamma\beta}|$")
         axis[a, b].set_xticks(scale_factors)
         plot_object = axis[a, b].plot([0],
                                       [grad_mags["standard"][n_qubits_index]],
                                       marker='x', markersize=MARKERSIZE,
-                                      lw=7, color='r')
+                                      lw=7, color='r', mew=MEW / 2)
         legend_elements.extend(plot_object)
         #plt.figure(all_figure.number)
         #plt.plot(scale_factors, outputs)
         #plt.figure(figure.number)
 
     # Adds a global plot legend, with hard-coded legend markers.
-    legend_marks = [Line2D(range(2), range(2), color='k', lw=2, marker='o',
-                           ls='-'),
-                    Line2D(range(2), range(2), color='b', lw=2, marker='o',
-                           ls='--'),
+    legend_marks = [Line2D(range(1), range(1), color='k', lw=2, marker='o',
+                           ls="None"),
+                    Line2D(range(1), range(1), color='b', lw=2, marker='o',
+                           ls="None"),
                     Line2D(range(1), range(1), color='r', lw=2, marker='x',
-                           ls="None")]
-    figure.legend(legend_marks, ["Unitary Folding", "Extrapolation",
-                                 "True Noise-Free"],
-                  title="Legend",
+                           ls="None", mew=MEW)]
+    LEGEND_KEYS = ["Unitary Folding", "Extrapolation", "True Noise-Free"]
+    figure.legend(legend_marks, ['\n' + '\n'.join(wrap(label, 13)) + '\n'
+                               for label in LEGEND_KEYS],
+                  loc='center right',
+                  handlelength=3,
                   markerscale=2)
+    plt.subplots_adjust(hspace=0.6, wspace=0.3 ,right=0.8, left=0.06)
 
     # Plots maximum ZNE gradient magnitude
     #avg_grad_mags = datasets["avg grad magnitudes"]
@@ -355,9 +365,9 @@ def plot_folding(datasets, num_qubits_range, noise_level=None):
     #plt.xticks(scale_factors)
     #plt.title("unitary folding")
 
-    figure.suptitle(f"ZNE per Noise Level ({NUM_QUBITS} Node MAXCUT)")
+    figure.suptitle(f"ZNE per Noise Level ({NUM_QUBITS} Node MAXCUT)",
+                    fontweight="bold")
     #figure.tight_layout()
-    plt.subplots_adjust(hspace=0.5)
     return figure, axis#, all_figure
 
 
@@ -389,8 +399,9 @@ def plot_rounds_demo(datasets, num_rounds_range, rounds_condition):
     plt.xticks([int(num) for num in num_rounds_range])
     plt.ylabel(r"Average |$\partial C_{\gamma\beta}$|")
     plt.title("Average Gradient Magnitudes v. Circuit Depth")
-    plt.legend(["Noise Free",
-                f"Noisy (Depolarization Probability = {int(NOISE_LEVEL * 100)}%)"]) 
+    labels = ["Noise Free",
+              f"Noisy (Depolarization Probability = {int(NOISE_LEVEL * 100)}%)"]
+    plt.legend(labels) 
 
 def main(datasets, num_qubits_range, num_rounds_range, simulation_conditions):
     """
@@ -460,8 +471,8 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("---> ERROR: Input number of trials...")
     else:
-        sim_conditions = {"nibp": False, "fermionic": False, "zne": False,
-                          "rounds": True}
+        sim_conditions = {"nibp": False, "fermionic": False, "zne": True,
+                          "rounds": False}
         num_trials = int(sys.argv[1])
         if len(sys.argv) > 2:
             extract_data = sys.argv[2]
