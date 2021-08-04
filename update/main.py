@@ -14,7 +14,7 @@ def set_simulation_constants():
     Generates constants and labels used in simulation.
     """
     NUM_TRIALS = 10
-    SIZE_RANGE = range(4, 11)
+    CIRCUIT_SIZES = range(4, 11)
     ERROR_RATES = ["0%", "3%", "5%", "10%", "15%"]
     MAX_FOLD = 4
 
@@ -25,20 +25,42 @@ def set_simulation_constants():
     NOISE_LEVELS = ERROR_RATES[:]
     for error_rate in ERROR_RATES:
         folded_noise_levels = [error_rate + " fold x" + str(folding_factor)
-                               for folding_factor in range(MAX_FOLD + 1)
-                               if folding_factor > 1]
+                               for folding_factor in range(1, MAX_FOLD + 1)]
         NOISE_LEVELS.extend(folded_noise_levels)
 
-    return NUM_TRIALS, SIZE_RANGE, ERROR_RATES, MAX_FOLD, NOISE_LEVELS 
+    return NUM_TRIALS, CIRCUIT_SIZES, ERROR_RATES, MAX_FOLD, NOISE_LEVELS 
 
 
 class Data():
+    """
+    Stores raw data and includes methods to extract processed data.
+    """
     def __init__(self, constants):
-        """
-        """
-        NUM_TRIALS, SIZE_RANGE, ERROR_RATES, MAX_FOLD, NOISE_LEVELS = constants
-        self.raw_data = np.zeros(shape=(len(SIZE_RANGE), NUM_TRIALS,
-                                        len(NOISE_LEVELS))) 
+        NUM_TRIALS, CIRCUIT_SIZES, ERROR_RATES, MAX_FOLD, NOISE_LVLS = constants
+        self.num_trials = NUM_TRIALS
+        self.circuit_sizes = CIRCUIT_SIZES
+        self.error_rates = ERROR_RATES
+        self.max_fold = MAX_FOLD
+        self.noise_levels = NOISE_LVLS
+        self.raw_data = np.zeros(shape=(len(CIRCUIT_SIZES), NUM_TRIALS,
+                                        len(NOISE_LVLS))) 
+
+
+def simulate(data):
+    """
+    Runs QAOA simulation for a range of circuit sizes (i.e., circuit width, numb     er of qubits), updating given data structure.
+    """
+    # Iterate over range of circuit sizes, building Erdos-Renyi graph for each
+    #  size.
+    num_trials = data.num_trials
+    circuit_sizes = data.circuit_sizes
+    for circuit_size in circuit_sizes:
+        pass
+
+    # Per circuit size, iterates over a given number of trials.
+
+    # Per trial, iterates over a given number of error rates and runs QAOA
+    #  simulation given circuit size and error rate.
 
 
 def main():
@@ -52,6 +74,7 @@ def main():
     #  level]).
     constants = set_simulation_constants()
     data = Data(constants)
+    simulate(data)
 
 
 if __name__ == "__main__":
