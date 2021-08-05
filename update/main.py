@@ -9,16 +9,25 @@ For MAXCUT optimization on simulated quantum circuits, estimates cost function
 
 import numpy as np
 import networkx as nx
+from random import random
+from qiskit import QuantumCircuit, execute
+from qiskit.providers.aer import QasmSimulator
 
-class Data():
+class Data:
     """
     Stores raw data and includes methods to extract processed data.
     """
     def __init__(self):
         constants = self.set_simulation_constants()
-        NUM_TRIALS, CIRCUIT_SIZES, ERROR_RATES, MAX_FOLD, NOISE_LVLS = constants
+        (NUM_TRIALS,
+         CIRCUIT_SIZES,
+         MAX_GATE_PARAMS,
+         ERROR_RATES,
+         MAX_FOLD,
+         NOISE_LVLS) = constants
         self.num_trials = NUM_TRIALS
         self.circuit_sizes = CIRCUIT_SIZES
+        self.max_gate_params = MAX_GATE_PARAMS
         self.error_rates = ERROR_RATES
         self.max_fold = MAX_FOLD
         self.noise_levels = NOISE_LVLS
@@ -29,8 +38,10 @@ class Data():
         """
         Generates constants and labels used in simulation.
         """
-        NUM_TRIALS = 10
+        NUM_TRIALS = 1
         CIRCUIT_SIZES = range(4, 11)
+        MAX_GAMMA, MAX_BETA = np.pi, np.pi
+        MAX_GATE_PARAMS = MAX_GAMMA, MAX_BETA
         ERROR_RATES = ["0%", "3%", "5%", "10%", "15%"]
         MAX_FOLD = 4
     
@@ -45,20 +56,33 @@ class Data():
                                    for folding_factor in range(1, MAX_FOLD + 1)]
             NOISE_LEVELS.extend(folded_noise_levels)
     
-        return NUM_TRIALS, CIRCUIT_SIZES, ERROR_RATES, MAX_FOLD, NOISE_LEVELS 
+        return (NUM_TRIALS, CIRCUIT_SIZES, MAX_GATE_PARAMS, ERROR_RATES,
+                MAX_FOLD, NOISE_LEVELS)
 
 
-class RandomCircuit():
+class RandomCircuit:
     """
     Random quantum circuit built using Erdor-Renyi model.
     """
     def __init__(self, num_qubits, gate_parameters):
-        EDGE_PROBABILITY = 0.5
+        constants = self.set_circuit_constants()
+        EDGE_PROBABILITY, SHOTS = constants
+        self.edge_probability = EDGE_PROBABILITY
+        self.execution_shots = SHOTS
         self.num_qubits = num_qubits
         self.gate_parameters = gate_parameters
         connectivity = self.create_connectivity(num_qubits, EDGE_PROBABILITY)
         self.connectivity = connectivity
-        self.circuit = self.build_circuit(connectivity, gate_parameters)
+        self.circuit = self.build(gate_parameters)
+
+
+    def set_circuit_constants(self):
+        """
+        Generates constants and labels used by random circuit.
+        """
+        EDGE_PROBABILITY = 0.5
+        SHOTS = 1000
+        return EDGE_PROBABILITY, SHOTS
 
 
     def create_connectivity(self, num_qubits, edge_probability):
@@ -72,33 +96,97 @@ class RandomCircuit():
         return graph
 
 
-    def build_circuit(self, connectivity, gate_parameters):
+    def build(self, gate_parameters):
         """
         Given connectivity, build QAOA circuit.
         """
+        num_qubits = self.num_qubits
+        connectivity = self.connectivity
+
         gamma, beta = gate_parameters
-        #TODO:
+        qubits = connectivity.nodes
+        edges = connectivity.edges
+
+        num_inputs = num_qubits
+        num_outputs = num_qubits
+        circuit = QuantumCircuit(num_inputs, num_outputs)
+
+        # Prepares QAOA circuit, initializing qubits into superposition, adding 
+        #  circuit connectivity with Ising-type interactions, and applying a
+        #  mixing layer with single qubit X-rotations.
+        circuit.h(qubits)
+        for edge in edges:
+            self.ising_interaction(edge, circuit, gamma)
+        circuit.rx(2 * beta, qubits)
+        circuit.measure_all()
+
+        return circuit
 
 
-class Trial():
+    def ising_interaction(self, edge, circuit, gamma):
+        """
+        Applies an Ising-type interaction to given edge, connecting qubits.
+        """
+        left_qubit, right_qubit = edge
+        circuit.cp(-2 * gamma, left_qubit, right_qubit)
+        circuit.p(gamma, left_qubit)
+        circuit.p(gamma, right_qubit)
+
+
+    def set_backend(self, backend):
+        """
+        Given backend parameter, sets circuit execution backend.
+        """
+        self.backend = backend
+
+
+    def execute(self):
+        """
+        Executes quantum circuit on some chosen backend, obaaining sampled
+         bitstring counts.
+        """
+        circuit = self.circuit
+        backend = self.backend
+        execution_shots = self.execution_shots
+
+        job = execute(circuit, backend, shots=execution_shots)
+        result = job.result()
+        counts = result.get_counts()
+        return counts
+
+
+    def estimate_gradient(self, noise_level):
+        """
+        """
+        pass
+
+
+class Trial:
     """
     Builds and executes necessary circuit elements for a single simulation
      trial.
     """
-    def __init__(self, circuit_size, noise_levels):
-        gate_parameters = self.get_gate_parameters()
+    def __init__(self, circuit_size, max_gate_params, noise_levels):
+        gate_parameters = self.get_gate_parameters(max_gate_params)
         self.gate_parameters = gate_parameters
         self.circuit = RandomCircuit(circuit_size, gate_parameters)
         self.circuit_size = circuit_size
         self.noise_levels = noise_levels
 
 
-    def get_gate_parameters(self):
+    def get_gate_parameters(self, max_gate_params):
         """
         Initialize new random gate parameters, gamma and beta.
         """
-        #TODO:
-        return 0.0, 0.0
+        MAX_GAMMA, MAX_BETA = max_gate_params
+        return random() * MAX_GAMMA, random() * MAX_BETA
+
+
+    def build_backend(self, noise_level):
+        """
+        Gets a (potentially noisy) backend.
+        """
+        return QasmSimulator()
 
 
     def run(self):
@@ -106,8 +194,12 @@ class Trial():
         Iterates over given noise levels and runs QAOA simulation given
          circuit size and noise level.
         """
-        #TODO:
-        pass
+        noise_levels = self.noise_levels
+        circuit = self.circuit
+        for noise_level in noise_levels:
+            backend = self.build_backend(noise_level)
+            circuit.set_backend(backend)
+            gradient_magnitude = circuit.estimate_gradient(noise_level)
 
 
 def simulate(data):
@@ -118,13 +210,13 @@ def simulate(data):
     #  size.
     num_trials = data.num_trials
     circuit_sizes = data.circuit_sizes
+    max_gate_params = data.max_gate_params
     noise_levels = data.noise_levels
+
     for circuit_size in circuit_sizes:
-
         # Per circuit size, iterates over a given number of trials.
-        trial_object = Trial(circuit_size, noise_levels)
+        trial_object = Trial(circuit_size, max_gate_params, noise_levels)
         for trial in range(num_trials):
-
             # Per trial, iterates over a given number of error rates and runs
             #  QAOA simulation given circuit size and error rate.
             trial_object.run()
