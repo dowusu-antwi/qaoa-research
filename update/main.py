@@ -13,6 +13,7 @@ from random import random
 from qiskit import QuantumCircuit, execute
 from qiskit.providers.aer import QasmSimulator
 
+
 class Data:
     """
     Stores raw data and includes methods to extract processed data.
@@ -62,13 +63,14 @@ class Data:
 
 class RandomCircuit:
     """
-    Random quantum circuit built using Erdor-Renyi model.
+    Random quantum circuit built using Erdos-Renyi model.
     """
     def __init__(self, num_qubits, gate_parameters):
         constants = self.set_circuit_constants()
-        EDGE_PROBABILITY, SHOTS = constants
+        EDGE_PROBABILITY, SHOTS, PARAMETER_STEP = constants
         self.edge_probability = EDGE_PROBABILITY
         self.execution_shots = SHOTS
+        self.parameter_step = PARAMETER_STEP
         self.num_qubits = num_qubits
         self.gate_parameters = gate_parameters
         connectivity = self.create_connectivity(num_qubits, EDGE_PROBABILITY)
@@ -82,7 +84,8 @@ class RandomCircuit:
         """
         EDGE_PROBABILITY = 0.5
         SHOTS = 1000
-        return EDGE_PROBABILITY, SHOTS
+        PARAMETER_STEP = 0.01
+        return EDGE_PROBABILITY, SHOTS, PARAMETER_STEP
 
 
     def create_connectivity(self, num_qubits, edge_probability):
@@ -140,12 +143,14 @@ class RandomCircuit:
         self.backend = backend
 
 
-    def execute(self):
+    def execute(self, circuit=None):
         """
-        Executes quantum circuit on some chosen backend, obaaining sampled
+        Executes quantum circuit on some chosen backend, obtaining sampled
          bitstring counts.
         """
-        circuit = self.circuit
+        # Sets circuit execution parameters, using RandomCircuit circuit
+        #  variable if no circuit parameter is given.
+        circuit = circuit if circuit else self.circuit
         backend = self.backend
         execution_shots = self.execution_shots
 
@@ -155,10 +160,51 @@ class RandomCircuit:
         return counts
 
 
-    def estimate_gradient(self, noise_level):
+    def evaluate_cost(self, bitstring):
         """
+        Evaluates canonical cost function for combinatorial optimization
+         corresponding to MAXCUT.
         """
-        pass
+        connectivity = self.connectivity
+        cost = 0
+        edges = connectivity.edges()
+        for edge in edges:
+            left_qubit, right_qubit = edge
+            left_qubit_value = int(bitstring[left_qubit])
+            right_qubit_value = int(bitstring[right_qubit])
+            additive_term = (left_qubit_value * (1 - right_qubit_value)
+                           + right_qubit_value * (1 - left_qubit_value))
+            edge_weight = connectivity[left_qubit][right_qubit]["weight"]
+            cost += edge_weight * additive_term
+        return cost
+
+
+    def compute_expected_cost(self, counts):
+        """
+        Computes expected cost of bitstrings sampled from circuit execution.
+        """
+        # Calculates expected cost, weighted sum of costs with weights given by 
+        #  bitstring frequency / probability.
+        execution_shots = self.execution_shots
+        expected_cost = 0
+        for sampled_bitstring, count in counts.items():
+            frequency = count / execution_shots
+            expected_cost += frequency * self.evaluate_cost(sampled_bitstring)
+        return expected_cost
+
+
+    def estimate_gradient(self):
+        """
+        Compute cost at given point in parameter space and at two points each
+         slightly offset along one of the parameter axes, respectively, to
+         estimate cost function gradient.
+        """
+        counts = self.execute()
+        expected_cost = self.compute_expected_cost(counts)
+
+        parameter_step = self.parameter_step
+        gamma, beta = self.gate_parameters
+        # TODO: compute gradient...
 
 
 class Trial:
@@ -169,7 +215,7 @@ class Trial:
     def __init__(self, circuit_size, max_gate_params, noise_levels):
         gate_parameters = self.get_gate_parameters(max_gate_params)
         self.gate_parameters = gate_parameters
-        self.circuit = RandomCircuit(circuit_size, gate_parameters)
+        self.random_circuit = RandomCircuit(circuit_size, gate_parameters)
         self.circuit_size = circuit_size
         self.noise_levels = noise_levels
 
@@ -186,6 +232,7 @@ class Trial:
         """
         Gets a (potentially noisy) backend.
         """
+        # TODO: add noise...
         return QasmSimulator()
 
 
@@ -195,11 +242,12 @@ class Trial:
          circuit size and noise level.
         """
         noise_levels = self.noise_levels
-        circuit = self.circuit
+        random_circuit = self.random_circuit
         for noise_level in noise_levels:
             backend = self.build_backend(noise_level)
-            circuit.set_backend(backend)
-            gradient_magnitude = circuit.estimate_gradient(noise_level)
+            random_circuit.set_backend(backend)
+            gradient = random_circuit.estimate_gradient()
+            # TODO: compute its magnitude...
 
 
 def simulate(data):
