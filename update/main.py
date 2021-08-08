@@ -12,6 +12,7 @@ import networkx as nx
 from random import random
 from qiskit import QuantumCircuit, execute
 from qiskit.providers.aer import QasmSimulator
+from qiskit.providers.aer.noise import NoiseModel, depolarizing_error
 
 
 class RandomCircuit:
@@ -20,10 +21,22 @@ class RandomCircuit:
     """
     def __init__(self, num_qubits, gate_parameters):
         constants = self.set_circuit_constants()
-        EDGE_PROBABILITY, SHOTS, PARAMETER_STEP = constants
+        (EDGE_PROBABILITY,
+         SHOTS,
+         PARAMETER_STEP,
+         ONE_QUBIT_GATE_BASIS,
+         TWO_QUBIT_GATE_BASIS) = constants
+
         self.edge_probability = EDGE_PROBABILITY
         self.execution_shots = SHOTS
         self.parameter_step = PARAMETER_STEP
+
+        # Saves collection of native gates, along with the corresponding gate
+        #  dimensions, for 1-qubit gates and 2-qubit gates.
+        gate_bases = (ONE_QUBIT_GATE_BASIS, TWO_QUBIT_GATE_BASIS)
+        self.gate_bases = gate_bases
+        self.gate_dimensions = range(1, len(gate_bases) + 1)
+        
         self.num_qubits = num_qubits
         self.gate_parameters = gate_parameters
         connectivity = self.create_connectivity(num_qubits, EDGE_PROBABILITY)
@@ -38,7 +51,13 @@ class RandomCircuit:
         EDGE_PROBABILITY = 0.5
         SHOTS = 1000
         PARAMETER_STEP = 0.01
-        return EDGE_PROBABILITY, SHOTS, PARAMETER_STEP
+        ONE_QUBIT_GATE_BASIS = ["rx", "rz"]    # ["p", "rx"]
+        TWO_QUBIT_GATE_BASIS = ["cx"]          # ["cp"]
+        return (EDGE_PROBABILITY,
+                SHOTS,
+                PARAMETER_STEP,
+                ONE_QUBIT_GATE_BASIS,
+                TWO_QUBIT_GATE_BASIS)
 
 
     def create_connectivity(self, num_qubits, edge_probability):
@@ -260,6 +279,15 @@ class Data:
         raw_data[position] = value
 
 
+    def extract_plot_data(self):
+        """
+        Gets input / output data for matplotlib plotting, given a set of
+         filters.
+        """
+        # TODO: average across trials, select noise levels I want...
+        pass
+
+
 class Trial:
     """
     Builds and executes necessary circuit elements for a single simulation
@@ -283,7 +311,7 @@ class Trial:
 
     def build_backend(self, noise_level):
         """
-        Gets a (potentially noisy) backend.
+        Creates a (potentially noisy) backend.
         """
         # Processes noise level label to extract data for building noise model.
         MAX_NO_FOLD_LABEL_LENGTH = 3
@@ -291,12 +319,26 @@ class Trial:
         error_rate = int(noise_level.split('%')[0]) / 100
         folding_scale_factor = (int(noise_level[::-1].split('x')[0])
                                 if fold else None)
+
         ## Prints processed noise level data...(FOR DEBUGGING)
         #print("fold?: %s\t error rate: %s\t scale factor: %s" %
         #      (("Yes" if fold else "No"),
         #       error_rate,
         #       (folding_scale_factor if fold else "None")))
-        return QasmSimulator()
+
+        if error_rate == 0:
+            return QasmSimulator()
+
+        random_circuit = self.random_circuit
+        gate_dimensions = random_circuit.gate_dimensions
+        gate_bases = random_circuit.gate_bases
+
+        simulation_noise_model = NoiseModel()
+        for gate_dimension, gate_basis in zip(gate_dimensions, gate_bases):
+            gate_error = depolarizing_error(error_rate, gate_dimension)
+            simulation_noise_model.add_all_qubit_quantum_error(gate_error,
+                                                               gate_basis)
+        return QasmSimulator(noise_model = simulation_noise_model)
 
 
     def run(self, trial, data):
@@ -318,7 +360,6 @@ class Trial:
                              trial,
                              noise_level,
                              circuit_size)
-            
 
 
 def simulate(data):
