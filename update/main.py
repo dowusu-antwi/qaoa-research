@@ -216,6 +216,7 @@ class Data:
         self.noise_levels = NOISE_LVLS
         raw_data, data_entry_ranges = self.initialize_data_array()
         self.raw_data = raw_data
+        self.trial_averaged_data = None
 
         # Ordered list of data entry ranges necessary to position a given data
         #  entry value (see self.store_value).
@@ -279,13 +280,32 @@ class Data:
         raw_data[position] = value
 
 
-    def extract_plot_data(self):
+    def extract_graph_data(self, noise_levels_filter):
         """
         Gets input / output data for matplotlib plotting, given a set of
          filters.
+
+        Inputs:
+         noise_levels_filter: list of noise_levels indicating whether to extract
+                              input / output data for given noise level.
         """
-        # TODO: average across trials, select noise levels I want...
-        pass
+        raw_data = self.raw_data
+        trial_averaged_data = self.trial_averaged_data
+        data_entry_ranges = self.data_entry_ranges
+        num_trials_range, noise_levels, circuit_sizes = data_entry_ranges
+
+        # Averages raw data across trials and saves result.
+        if not trial_averaged_data:
+            trial_axis = data_entry_ranges.index(num_trials_range)
+            trial_averaged_data = np.mean(raw_data, axis=trial_axis)
+            self.trial_averaged_data = trial_averaged_data
+
+        graph_data = []
+        for noise_level_index, noise_level in enumerate(noise_levels):
+            if noise_level in noise_levels_filter:
+                output_data = trial_averaged_data[noise_level_index]
+                graph_data.append((circuit_sizes, output_data))
+        return graph_data
 
 
 class Trial:
