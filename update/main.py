@@ -41,7 +41,7 @@ class RandomCircuit:
         self.gate_parameters = gate_parameters
         connectivity = self.create_connectivity(num_qubits, EDGE_PROBABILITY)
         self.connectivity = connectivity
-        self.circuit = self.build(gate_parameters)
+        self.circuit = self.build_circuit(gate_parameters)
 
 
     def set_circuit_constants(self):
@@ -71,7 +71,7 @@ class RandomCircuit:
         return graph
 
 
-    def build(self, gate_parameters):
+    def build_circuit(self, gate_parameters):
         """
         Given connectivity, build QAOA circuit.
         """
@@ -179,12 +179,12 @@ class RandomCircuit:
         # Computes expected cost at each position shifted along the parameter
         #  axes, using expected cost differences to estimate gradient vector.
         gamma_shift_params = (gamma + parameter_step, beta)
-        circuit_gamma_shift = self.build(gamma_shift_params)
+        circuit_gamma_shift = self.build_circuit(gamma_shift_params)
         gamma_shift_counts = self.execute(circuit_gamma_shift)
         expected_cost_gamma_shift = self.get_expected_cost(gamma_shift_counts)
 
         beta_shift_params = (gamma, beta + parameter_step)
-        circuit_beta_shift = self.build(beta_shift_params)
+        circuit_beta_shift = self.build_circuit(beta_shift_params)
         beta_shift_counts = self.execute(circuit_beta_shift)
         expected_cost_beta_shift = self.get_expected_cost(beta_shift_counts)
  
@@ -217,6 +217,9 @@ class Data:
         raw_data, data_entry_ranges = self.initialize_data_array()
         self.raw_data = raw_data
         self.trial_averaged_data = None
+
+        # Tracks data entries in which values have been stored.
+        self.accessed_data_entries = set()
 
         # Ordered list of data entry ranges necessary to position a given data
         #  entry value (see self.store_value).
@@ -271,6 +274,7 @@ class Data:
         """
         raw_data = self.raw_data
         data_entry_ranges = self.data_entry_ranges
+        accessed_data_entries = self.accessed_data_entries
 
         # Orders trial number, noise level, and circuit size labels according to
         #  the order in which corresponding ranges appear in saved variable.
@@ -278,6 +282,27 @@ class Data:
         position = tuple(data_entry_ranges[idx].index(position_labels[idx])
                          for idx in range(len(position_labels)))
         raw_data[position] = value
+        accessed_data_entries.add(position_labels)
+        
+
+
+    def get_value(self, num_trial, noise_level, circuit_size):
+        """
+        Gets data entry value given position indicated by trial number, noise
+         level, and circuit size.
+        """
+        raw_data = self.raw_data
+        data_entry_ranges = self.data_entry_ranges
+        accessed_data_entries = self.accessed_data_entries
+
+        # Orders trial number, noise level, and circuit size labels according to
+        #  the order in which corresponding ranges appear in saved variable.
+        position_labels = (num_trial, noise_level, circuit_size)
+        if position_labels in accessed_data_entries:
+            position = tuple(data_entry_ranges[idx].index(position_labels[idx])
+                             for idx in range(len(position_labels)))
+            value = raw_data[position]
+            return value
 
 
     def extract_graph_data(self, noise_levels_filter):
@@ -370,6 +395,9 @@ class Trial:
         random_circuit = self.random_circuit
         circuit_size = self.circuit_size
         for noise_level in noise_levels:
+            # Skips data entries in which values have already been stored.
+            if data.get_value(trial, noise_level, circuit_size):
+                continue
             backend = self.build_backend(noise_level)
             random_circuit.set_backend(backend)
             gradient = random_circuit.estimate_gradient()
@@ -382,17 +410,23 @@ class Trial:
                              circuit_size)
 
 
-def simulate(data):
+def simulate(data, fold=True):
     """
-    Runs QAOA simulation for a range of circuit sizes (i.e., circuit width,
+    Runs QAOA simulation for a range of circuit sizes (i.e., circuit width:
      number of qubits), updating given data structure.
+
+    Inputs:
+     fold (boolean): indicates whether or not to simulate noise levels that
+                     include unitary folding for noise scaling.
     """
     # Iterate over range of circuit sizes, building Erdos-Renyi graph for each
     #  size.
     num_trials = data.num_trials
     circuit_sizes = data.circuit_sizes
     max_gate_params = data.max_gate_params
-    noise_levels = data.noise_levels
+    noise_levels = (data.noise_levels if fold else
+                    [noise_level for noise_level in data.noise_levels
+                     if "fold" not in noise_level])
 
     for circuit_size in circuit_sizes:
         # Per circuit size, iterates over a given number of trials.
