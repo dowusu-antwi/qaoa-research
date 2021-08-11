@@ -108,6 +108,14 @@ class RandomCircuit:
         circuit.p(gamma, right_qubit)
 
 
+    def fold(self, folding_factor, circuit=None):
+        """
+        Applies unitary folding, given factor by which to scale noise.
+        """
+        #TODO: add unitary folding...
+        pass
+
+
     def set_backend(self, backend):
         """
         Given backend parameter, sets circuit execution backend.
@@ -165,13 +173,14 @@ class RandomCircuit:
         return expected_cost
 
 
-    def estimate_gradient(self):
+    def estimate_gradient(self, folding_factor=None):
         """
         Compute cost at given point in parameter space and at two points each
          slightly offset along one of the parameter axes, respectively, to
          estimate cost function gradient vector (np.array(shape=(2, 1))).
         """
-        counts = self.execute()
+        circuit = self.fold(folding_factor) if folding_factor else None
+        counts = self.execute(circuit)
         expected_cost = self.get_expected_cost(counts)
         parameter_step = self.parameter_step
         gamma, beta = self.gate_parameters
@@ -180,11 +189,15 @@ class RandomCircuit:
         #  axes, using expected cost differences to estimate gradient vector.
         gamma_shift_params = (gamma + parameter_step, beta)
         circuit_gamma_shift = self.build_circuit(gamma_shift_params)
+        circuit_gamma_shift = (self.fold(folding_factor, circuit_gamma_shift)
+                               if folding_factor else circuit_gamma_shift)
         gamma_shift_counts = self.execute(circuit_gamma_shift)
         expected_cost_gamma_shift = self.get_expected_cost(gamma_shift_counts)
 
         beta_shift_params = (gamma, beta + parameter_step)
         circuit_beta_shift = self.build_circuit(beta_shift_params)
+        circuit_beta_shift = (self.fold(folding_factor, circuit_beta_shift)
+                              if folding_factor else circuit_beta_shift)
         beta_shift_counts = self.execute(circuit_beta_shift)
         expected_cost_beta_shift = self.get_expected_cost(beta_shift_counts)
  
@@ -370,6 +383,8 @@ class Trial:
         #      (("Yes" if fold else "No"),
         #       error_rate,
         #       (folding_scale_factor if fold else "None")))
+
+        #TODO: return folding scale factor...
 
         if error_rate == 0:
             return QasmSimulator()
