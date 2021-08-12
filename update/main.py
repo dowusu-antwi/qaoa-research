@@ -13,7 +13,7 @@ from random import random
 from qiskit import QuantumCircuit, execute
 from qiskit.providers.aer import QasmSimulator
 from qiskit.providers.aer.noise import NoiseModel, depolarizing_error
-
+from mitiq.zne.scaling import fold_gates_from_right
 
 class RandomCircuit:
     """
@@ -71,7 +71,7 @@ class RandomCircuit:
         return graph
 
 
-    def build_circuit(self, gate_parameters):
+    def build_circuit(self, gate_parameters, folding_scale_factor=None):
         """
         Given connectivity, build QAOA circuit.
         """
@@ -108,12 +108,14 @@ class RandomCircuit:
         circuit.p(gamma, right_qubit)
 
 
-    def fold(self, folding_factor, circuit=None):
+    def fold(self, folding_scale_factor, circuit=None):
         """
         Applies unitary folding, given factor by which to scale noise.
         """
-        #TODO: add unitary folding...
-        pass
+        circuit = self.circuit if not circuit else circuit
+        if not folding_scale_factor or folding_scale_factor == 1:
+            return circuit
+        return fold_gates_from_right(circuit, folding_scale_factor)
 
 
     def set_backend(self, backend):
@@ -173,13 +175,13 @@ class RandomCircuit:
         return expected_cost
 
 
-    def estimate_gradient(self, folding_factor=None):
+    def estimate_gradient(self, folding_scale_factor=None):
         """
         Compute cost at given point in parameter space and at two points each
          slightly offset along one of the parameter axes, respectively, to
          estimate cost function gradient vector (np.array(shape=(2, 1))).
         """
-        circuit = self.fold(folding_factor) if folding_factor else None
+        circuit = self.fold(folding_scale_factor)
         counts = self.execute(circuit)
         expected_cost = self.get_expected_cost(counts)
         parameter_step = self.parameter_step
@@ -189,15 +191,15 @@ class RandomCircuit:
         #  axes, using expected cost differences to estimate gradient vector.
         gamma_shift_params = (gamma + parameter_step, beta)
         circuit_gamma_shift = self.build_circuit(gamma_shift_params)
-        circuit_gamma_shift = (self.fold(folding_factor, circuit_gamma_shift)
-                               if folding_factor else circuit_gamma_shift)
+        circuit_gamma_shift = self.fold(folding_scale_factor,
+                                        circuit_gamma_shift)
         gamma_shift_counts = self.execute(circuit_gamma_shift)
         expected_cost_gamma_shift = self.get_expected_cost(gamma_shift_counts)
 
         beta_shift_params = (gamma, beta + parameter_step)
         circuit_beta_shift = self.build_circuit(beta_shift_params)
-        circuit_beta_shift = (self.fold(folding_factor, circuit_beta_shift)
-                              if folding_factor else circuit_beta_shift)
+        circuit_beta_shift = self.fold(folding_scale_factor,
+                                       circuit_beta_shift)
         beta_shift_counts = self.execute(circuit_beta_shift)
         expected_cost_beta_shift = self.get_expected_cost(beta_shift_counts)
  
@@ -238,6 +240,11 @@ class Data:
         #  entry value (see self.store_value).
         self.data_entry_ranges = data_entry_ranges
 
+        # TODO: create a method to save circuits to this array...
+        # Initializes empty array for storing circuit QASM strings.
+        qasm_data, _ = self.initialize_data_array()
+        self.qasm_data = qasm_data.astype("object")
+
 
     def set_simulation_constants(self):
         """
@@ -266,7 +273,7 @@ class Data:
                 MAX_FOLD, NOISE_LEVELS)
 
 
-    def initialize_data_array(self):
+    def initialize_data_array(self, d):
         """
         Builds an empty array for storing raw data.
         """
@@ -280,23 +287,31 @@ class Data:
         return raw_data, data_entry_ranges
 
 
+    def get_position(self, num_trial, noise_level, circuit_size):
+        """
+        Calculates position in numpy array corresponding to given trial number, 
+         noise level, and circuit size.
+        """
+        # Orders trial number, noise level, and circuit size labels according to
+        #  the order in which corresponding ranges appear in saved variable.
+        data_entry_ranges = self.data_entry_ranges
+        data_entry_label = (num_trial, noise_level, circuit_size)
+        position = tuple(data_entry_ranges[idx].index(data_entry_label[idx])
+                         for idx in range(len(data_entry_label)))
+        return position
+
+
     def store_value(self, value, num_trial, noise_level, circuit_size):
         """
         Stores new data entry value given position indicated by trial number,
          noise level, and circuit size.
         """
         raw_data = self.raw_data
-        data_entry_ranges = self.data_entry_ranges
-        accessed_data_entries = self.accessed_data_entries
-
-        # Orders trial number, noise level, and circuit size labels according to
-        #  the order in which corresponding ranges appear in saved variable.
-        position_labels = (num_trial, noise_level, circuit_size)
-        position = tuple(data_entry_ranges[idx].index(position_labels[idx])
-                         for idx in range(len(position_labels)))
+        data_entry_label = (num_trial, noise_level, circuit_size)
+        position = self.get_position(*data_entry_label)
         raw_data[position] = value
-        accessed_data_entries.add(position_labels)
-        
+        accessed_data_entries = self.accessed_data_entries
+        accessed_data_entries.add(data_entry_label)
 
 
     def get_value(self, num_trial, noise_level, circuit_size):
@@ -305,15 +320,10 @@ class Data:
          level, and circuit size.
         """
         raw_data = self.raw_data
-        data_entry_ranges = self.data_entry_ranges
+        data_entry_label = (num_trial, noise_level, circuit_size)
         accessed_data_entries = self.accessed_data_entries
-
-        # Orders trial number, noise level, and circuit size labels according to
-        #  the order in which corresponding ranges appear in saved variable.
-        position_labels = (num_trial, noise_level, circuit_size)
-        if position_labels in accessed_data_entries:
-            position = tuple(data_entry_ranges[idx].index(position_labels[idx])
-                             for idx in range(len(position_labels)))
+        if data_entry_label in accessed_data_entries:
+            position = self.get_position(*entry_label)
             value = raw_data[position]
             return value
 
@@ -346,10 +356,10 @@ class Data:
         return graph_data
 
 
-class Trial:
+class Simulator:
     """
-    Builds and executes necessary circuit elements for a single simulation
-     trial.
+    Builds and executes necessary circuit elements for a QAOA circuit simulator,
+     given a fixed circuit size.
     """
     def __init__(self, circuit_size, max_gate_params, noise_levels):
         gate_parameters = self.initialize_gate_parameters(max_gate_params)
@@ -384,10 +394,9 @@ class Trial:
         #       error_rate,
         #       (folding_scale_factor if fold else "None")))
 
-        #TODO: return folding scale factor...
 
         if error_rate == 0:
-            return QasmSimulator()
+            return QasmSimulator(), folding_scale_factor
 
         random_circuit = self.random_circuit
         gate_dimensions = random_circuit.gate_dimensions
@@ -398,7 +407,8 @@ class Trial:
             gate_error = depolarizing_error(error_rate, gate_dimension)
             simulation_noise_model.add_all_qubit_quantum_error(gate_error,
                                                                gate_basis)
-        return QasmSimulator(noise_model = simulation_noise_model)
+        return (QasmSimulator(noise_model = simulation_noise_model),
+                folding_scale_factor)
 
 
     def run(self, trial, data):
@@ -413,43 +423,51 @@ class Trial:
             # Skips data entries in which values have already been stored.
             if data.get_value(trial, noise_level, circuit_size):
                 continue
-            backend = self.build_backend(noise_level)
-            random_circuit.set_backend(backend)
-            gradient = random_circuit.estimate_gradient()
-            gradient_magnitude = np.linalg.norm(gradient)
             print("circuit size: %s,\t trial num: %s, \t noise level: %s"
                    % (circuit_size, trial, noise_level))
+            backend, folding_scale_factor = self.build_backend(noise_level)
+            random_circuit.set_backend(backend)
+            gradient = random_circuit.estimate_gradient(folding_scale_factor)
+            gradient_magnitude = np.linalg.norm(gradient)
             data.store_value(gradient_magnitude,
                              trial,
                              noise_level,
                              circuit_size)
 
 
-def simulate(data, fold=True):
+def simulate(data, option=0):
     """
     Runs QAOA simulation for a range of circuit sizes (i.e., circuit width:
      number of qubits), updating given data structure.
 
     Inputs:
-     fold (boolean): indicates whether or not to simulate noise levels that
-                     include unitary folding for noise scaling.
+     option (int): indicates whether to simulate all noise levels (0), only
+                   those that don't include any noise scaling (1), or only those
+                   that include unitary folding for noise scaling (2).
     """
     # Iterate over range of circuit sizes, building Erdos-Renyi graph for each
     #  size.
     num_trials = data.num_trials
     circuit_sizes = data.circuit_sizes
     max_gate_params = data.max_gate_params
-    noise_levels = (data.noise_levels if fold else
-                    [noise_level for noise_level in data.noise_levels
-                     if "fold" not in noise_level])
+    noise_levels = data.noise_levels
+
+    # These options are for simulating with no noise scaling or only those noise
+    #  levels that include noise scaling, respectively. 
+    if option == 1:
+        noise_levels = [noise_level for noise_level in data.noise_levels
+                        if "fold" not in noise_level]
+    elif option == 2:
+        noise_levels = [noise_level for noise_level in data.noise_levels
+                        if "fold" in noise_level]
 
     for circuit_size in circuit_sizes:
         # Per circuit size, iterates over a given number of trials.
-        trial_object = Trial(circuit_size, max_gate_params, noise_levels)
+        simulator = Simulator(circuit_size, max_gate_params, noise_levels)
         for trial in range(num_trials):
             # Per trial, iterates over a given number of error rates and runs
             #  QAOA simulation given circuit size and error rate.
-            trial_object.run(trial, data)
+            simulator.run(trial, data)
 
 
 def main():
@@ -462,7 +480,7 @@ def main():
     #  level) is mapped to an index (i.e., data[circuit width][trial][noise
     #  level]).
     data = Data()
-    simulate(data)
+    simulate(data, option=1)
     return data
 
 
