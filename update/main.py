@@ -349,12 +349,24 @@ class Data:
         """
         Converts circuit to QASM and saves it to position indicated by trial
          number, noise level, and circuit size.
+
+        Note: this saves QASM of raw circuit *before* folding.
         """
         circuit = random_circuit.circuit
         qasm = circuit.qasm()
         position = self.get_position(num_trial, noise_level, circuit_size)
         qasm_data = self.qasm_data
         qasm_data[position] = qasm
+
+
+    def get_circuit_qasm(self, num_trial, noise_level, circuit_size):
+        """
+        Returns circuit QASM for position indicated by trial number,
+         noise level, and circuit size.
+        """
+        position = self.get_position(num_trial, noise_level, circuit_size)
+        qasm_data = self.qasm_data
+        return qasm_data[position]
 
 
     def extract_graph_data(self, noise_levels_filter):
