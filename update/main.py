@@ -42,6 +42,8 @@ class RandomCircuit:
         connectivity = self.create_connectivity(num_qubits, EDGE_PROBABILITY)
         self.connectivity = connectivity
         self.circuit = self.build_circuit(gate_parameters)
+        self.backend = None
+        self.folding_scale_factor = None
 
 
     def set_circuit_constants(self):
@@ -93,7 +95,9 @@ class RandomCircuit:
         for edge in edges:
             self.ising_interaction(edge, circuit, gamma)
         circuit.rx(2 * beta, qubits)
-        circuit.measure_all()
+        
+        for qubit in qubits:
+            circuit.measure(qubit, qubit)
 
         return circuit
 
@@ -118,11 +122,12 @@ class RandomCircuit:
         return fold_gates_from_right(circuit, folding_scale_factor)
 
 
-    def set_backend(self, backend):
+    def set_backend(self, backend, folding_scale_factor):
         """
-        Given backend parameter, sets circuit execution backend.
+        Given backend parameters, sets circuit execution backend.
         """
         self.backend = backend
+        self.folding_scale_factor = folding_scale_factor
 
 
     def execute(self, circuit=None):
@@ -132,10 +137,17 @@ class RandomCircuit:
         """
         # Sets circuit execution parameters, using RandomCircuit circuit
         #  variable if no circuit parameter is given.
-        circuit = circuit if circuit else self.circuit
+        circuit = self.circuit if not circuit else circuit
         backend = self.backend
         execution_shots = self.execution_shots
 
+        # Applies unitary folding, conditioned on whether the given backend
+        #  noise level includes it.
+        folding_scale_factor = self.folding_scale_factor
+        circuit = self.fold(folding_scale_factor, circuit)
+
+        # Executes circuit on given backend and extracts resulting bitstring
+        #  counts.
         job = execute(circuit, backend, shots=execution_shots)
         result = job.result()
         counts = result.get_counts()
@@ -175,13 +187,13 @@ class RandomCircuit:
         return expected_cost
 
 
-    def estimate_gradient(self, folding_scale_factor=None):
+    def estimate_gradient(self, circuit=None):
         """
         Compute cost at given point in parameter space and at two points each
          slightly offset along one of the parameter axes, respectively, to
          estimate cost function gradient vector (np.array(shape=(2, 1))).
         """
-        circuit = self.fold(folding_scale_factor)
+        circuit = self.circuit if not circuit else circuit
         counts = self.execute(circuit)
         expected_cost = self.get_expected_cost(counts)
         parameter_step = self.parameter_step
@@ -191,15 +203,11 @@ class RandomCircuit:
         #  axes, using expected cost differences to estimate gradient vector.
         gamma_shift_params = (gamma + parameter_step, beta)
         circuit_gamma_shift = self.build_circuit(gamma_shift_params)
-        circuit_gamma_shift = self.fold(folding_scale_factor,
-                                        circuit_gamma_shift)
         gamma_shift_counts = self.execute(circuit_gamma_shift)
         expected_cost_gamma_shift = self.get_expected_cost(gamma_shift_counts)
 
         beta_shift_params = (gamma, beta + parameter_step)
         circuit_beta_shift = self.build_circuit(beta_shift_params)
-        circuit_beta_shift = self.fold(folding_scale_factor,
-                                       circuit_beta_shift)
         beta_shift_counts = self.execute(circuit_beta_shift)
         expected_cost_beta_shift = self.get_expected_cost(beta_shift_counts)
  
@@ -229,7 +237,7 @@ class Data:
         self.error_rates = ERROR_RATES
         self.max_fold = MAX_FOLD
         self.noise_levels = NOISE_LVLS
-        raw_data, data_entry_ranges = self.initialize_data_array()
+        raw_data = self.initialize_data_array()
         self.raw_data = raw_data
         self.trial_averaged_data = None
 
@@ -238,11 +246,11 @@ class Data:
 
         # Ordered list of data entry ranges necessary to position a given data
         #  entry value (see self.store_value).
-        self.data_entry_ranges = data_entry_ranges
+        dimension_ranges = self.initialize_dimension_ranges()
+        self.dimension_ranges = dimension_ranges
 
-        # TODO: create a method to save circuits to this array...
         # Initializes empty array for storing circuit QASM strings.
-        qasm_data, _ = self.initialize_data_array()
+        qasm_data = self.initialize_data_array()
         self.qasm_data = qasm_data.astype("object")
 
 
@@ -273,7 +281,7 @@ class Data:
                 MAX_FOLD, NOISE_LEVELS)
 
 
-    def initialize_data_array(self, d):
+    def initialize_data_array(self):
         """
         Builds an empty array for storing raw data.
         """
@@ -281,10 +289,18 @@ class Data:
         num_rows = len(self.noise_levels)
         num_columns = len(self.circuit_sizes) 
         raw_data = np.zeros(shape=(num_pages, num_rows, num_columns))
-        data_entry_ranges = (range(self.num_trials),
-                             self.noise_levels,
-                             self.circuit_sizes)
-        return raw_data, data_entry_ranges
+        return raw_data
+
+
+    def initialize_dimension_ranges(self):
+        """
+        Creates list of data entry ranges in particular order necessary to
+         position a given data entry value (see store_value method).
+        """
+        dimension_ranges = (range(self.num_trials),
+                            self.noise_levels,
+                            self.circuit_sizes)
+        return dimension_ranges
 
 
     def get_position(self, num_trial, noise_level, circuit_size):
@@ -294,9 +310,9 @@ class Data:
         """
         # Orders trial number, noise level, and circuit size labels according to
         #  the order in which corresponding ranges appear in saved variable.
-        data_entry_ranges = self.data_entry_ranges
+        dimension_ranges = self.dimension_ranges
         data_entry_label = (num_trial, noise_level, circuit_size)
-        position = tuple(data_entry_ranges[idx].index(data_entry_label[idx])
+        position = tuple(dimension_ranges[idx].index(data_entry_label[idx])
                          for idx in range(len(data_entry_label)))
         return position
 
@@ -328,6 +344,19 @@ class Data:
             return value
 
 
+    def save_circuit_qasm(self, num_trial, noise_level, circuit_size,
+                          random_circuit):
+        """
+        Converts circuit to QASM and saves it to position indicated by trial
+         number, noise level, and circuit size.
+        """
+        circuit = random_circuit.circuit
+        qasm = circuit.qasm()
+        position = self.get_position(num_trial, noise_level, circuit_size)
+        qasm_data = self.qasm_data
+        qasm_data[position] = qasm
+
+
     def extract_graph_data(self, noise_levels_filter):
         """
         Gets input / output data for matplotlib plotting, given a set of
@@ -339,12 +368,12 @@ class Data:
         """
         raw_data = self.raw_data
         trial_averaged_data = self.trial_averaged_data
-        data_entry_ranges = self.data_entry_ranges
-        num_trials_range, noise_levels, circuit_sizes = data_entry_ranges
+        dimension_ranges = self.dimension_ranges
+        num_trials_range, noise_levels, circuit_sizes = dimension_ranges
 
         # Averages raw data across trials and saves result.
         if not trial_averaged_data:
-            trial_axis = data_entry_ranges.index(num_trials_range)
+            trial_axis = dimension_ranges.index(num_trials_range)
             trial_averaged_data = np.mean(raw_data, axis=trial_axis)
             self.trial_averaged_data = trial_averaged_data
 
@@ -426,8 +455,10 @@ class Simulator:
             print("circuit size: %s,\t trial num: %s, \t noise level: %s"
                    % (circuit_size, trial, noise_level))
             backend, folding_scale_factor = self.build_backend(noise_level)
-            random_circuit.set_backend(backend)
-            gradient = random_circuit.estimate_gradient(folding_scale_factor)
+            random_circuit.set_backend(backend, folding_scale_factor)
+            data.save_circuit_qasm(trial, noise_level, circuit_size,
+                                   random_circuit)
+            gradient = random_circuit.estimate_gradient()
             gradient_magnitude = np.linalg.norm(gradient)
             data.store_value(gradient_magnitude,
                              trial,
