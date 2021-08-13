@@ -10,7 +10,7 @@ For MAXCUT optimization on simulated quantum circuits, estimates cost function
 import numpy as np
 import networkx as nx
 from random import random
-from qiskit import QuantumCircuit, execute
+from qiskit import QuantumCircuit, execute, transpile
 from qiskit.providers.aer import QasmSimulator
 from qiskit.providers.aer.noise import NoiseModel, depolarizing_error
 from mitiq.zne.scaling import fold_gates_from_right
@@ -141,6 +141,13 @@ class RandomCircuit:
         backend = self.backend
         execution_shots = self.execution_shots
 
+        # Decomposes circuit into a fixed basis that works with mitiq folding
+        #  methods. We do this even for non-folding cases so that we are always
+        #  executing using the same basis gates.
+        one_qubit_basis, two_qubit_basis = self.gate_bases
+        basis = one_qubit_basis + two_qubit_basis
+        circuit = transpile(circuit, backend, basis_gates=basis) 
+
         # Applies unitary folding, conditioned on whether the given backend
         #  noise level includes it.
         folding_scale_factor = self.folding_scale_factor
@@ -148,7 +155,9 @@ class RandomCircuit:
 
         # Executes circuit on given backend and extracts resulting bitstring
         #  counts.
-        job = execute(circuit, backend, shots=execution_shots)
+        job = execute(circuit, backend,
+                      optimization_level=0,    # stops collapse of folding
+                      shots=execution_shots)
         result = job.result()
         counts = result.get_counts()
         return counts
