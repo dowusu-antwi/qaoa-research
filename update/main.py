@@ -95,10 +95,8 @@ class RandomCircuit:
         for edge in edges:
             self.ising_interaction(edge, circuit, gamma)
         circuit.rx(2 * beta, qubits)
-        
-        for qubit in qubits:
-            circuit.measure(qubit, qubit)
-
+       
+        circuit.measure_all() 
         return circuit
 
 
@@ -532,6 +530,11 @@ def main():
     #  level) is mapped to an index (i.e., data[circuit width][trial][noise
     #  level]).
     data = Data()
+
+    # Chooses one of three simulation options:
+    #  0) all noise levels,
+    #  1) noise levels without noise scaling,
+    #  2) noise levels with noise scaling.
     simulate(data, option=1)
     return data
 
