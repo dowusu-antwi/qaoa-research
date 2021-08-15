@@ -240,7 +240,7 @@ class Data:
          NOISE_LVLS) = constants
         self.num_trials = NUM_TRIALS
         self.circuit_sizes = CIRCUIT_SIZES
-        self.max_gate_params = MAX_GATE_PARAMS
+        self.max_gate_parameters = MAX_GATE_PARAMS
         self.error_rates = ERROR_RATES
         self.max_fold = MAX_FOLD
         self.noise_levels = NOISE_LVLS
@@ -265,7 +265,7 @@ class Data:
         """
         Generates constants and labels used in simulation.
         """
-        NUM_TRIALS = 1
+        NUM_TRIALS = 2
         CIRCUIT_SIZES = range(4, 11)
         MAX_GAMMA, MAX_BETA = np.pi, np.pi
         MAX_GATE_PARAMS = MAX_GAMMA, MAX_BETA
@@ -346,7 +346,7 @@ class Data:
         data_entry_label = (num_trial, noise_level, circuit_size)
         accessed_data_entries = self.accessed_data_entries
         if data_entry_label in accessed_data_entries:
-            position = self.get_position(*entry_label)
+            position = self.get_position(*data_entry_label)
             value = raw_data[position]
             return value
 
@@ -409,23 +409,21 @@ class Simulator:
     Builds and executes necessary circuit elements for a QAOA circuit simulator,
      given a fixed circuit size.
     """
-    def __init__(self, circuit_size, max_gate_params, noise_levels):
-        gate_parameters = self.initialize_gate_parameters(max_gate_params)
-        self.gate_parameters = gate_parameters
-        self.random_circuit = RandomCircuit(circuit_size, gate_parameters)
+    def __init__(self, circuit_size, max_gate_parameters, noise_levels):
         self.circuit_size = circuit_size
+        self.max_gate_parameters = max_gate_parameters
         self.noise_levels = noise_levels
 
 
-    def initialize_gate_parameters(self, max_gate_params):
+    def initialize_gate_parameters(self):
         """
         Initialize new random gate parameters, gamma and beta.
         """
-        MAX_GAMMA, MAX_BETA = max_gate_params
+        MAX_GAMMA, MAX_BETA = self.max_gate_parameters
         return random() * MAX_GAMMA, random() * MAX_BETA
 
 
-    def build_backend(self, noise_level):
+    def build_backend(self, noise_level, gate_dimensions, gate_bases):
         """
         Creates a (potentially noisy) backend.
         """
@@ -446,9 +444,6 @@ class Simulator:
         if error_rate == 0:
             return QasmSimulator(), folding_scale_factor
 
-        random_circuit = self.random_circuit
-        gate_dimensions = random_circuit.gate_dimensions
-        gate_bases = random_circuit.gate_bases
 
         simulation_noise_model = NoiseModel()
         for gate_dimension, gate_basis in zip(gate_dimensions, gate_bases):
@@ -463,17 +458,26 @@ class Simulator:
         """
         Iterates over given noise levels and runs QAOA simulation given
          circuit size and noise level.
+
+        Note: per circuit size, each trial uses a different random circuit, i.e.
+         with a new set of gate parameters - but given a single circuit for many
+         trials, value still varies, likely due to randomness of execution (?)
         """
         noise_levels = self.noise_levels
-        random_circuit = self.random_circuit
         circuit_size = self.circuit_size
+        gate_parameters = self.initialize_gate_parameters()
+        random_circuit = RandomCircuit(circuit_size, gate_parameters)
         for noise_level in noise_levels:
             # Skips data entries in which values have already been stored.
             if data.get_value(trial, noise_level, circuit_size):
                 continue
             print("circuit size: %s,\t trial num: %s, \t noise level: %s"
                    % (circuit_size, trial, noise_level))
-            backend, folding_scale_factor = self.build_backend(noise_level)
+            gate_dimensions = random_circuit.gate_dimensions
+            gate_bases = random_circuit.gate_bases
+            backend, folding_scale_factor = self.build_backend(noise_level,
+                                                               gate_dimensions,
+                                                               gate_bases)
             random_circuit.set_backend(backend, folding_scale_factor)
             data.save_circuit_qasm(trial, noise_level, circuit_size,
                                    random_circuit)
@@ -499,7 +503,7 @@ def simulate(data, option=0):
     #  size.
     num_trials = data.num_trials
     circuit_sizes = data.circuit_sizes
-    max_gate_params = data.max_gate_params
+    max_gate_parameters = data.max_gate_parameters
     noise_levels = data.noise_levels
 
     # These options are for simulating with no noise scaling or only those noise
@@ -513,7 +517,7 @@ def simulate(data, option=0):
 
     for circuit_size in circuit_sizes:
         # Per circuit size, iterates over a given number of trials.
-        simulator = Simulator(circuit_size, max_gate_params, noise_levels)
+        simulator = Simulator(circuit_size, max_gate_parameters, noise_levels)
         for trial in range(num_trials):
             # Per trial, iterates over a given number of error rates and runs
             #  QAOA simulation given circuit size and error rate.
