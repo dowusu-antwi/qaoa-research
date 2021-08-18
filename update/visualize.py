@@ -3,6 +3,8 @@
 from main import *
 
 from qiskit import QuantumCircuit
+from qiskit.visualization.matplotlib import MatplotlibDrawer as Drawer
+from qiskit.visualization.utils import _get_layered_instructions as UtilOutput
 
 from PyQt5 import QtWidgets, QtCore
 import matplotlib.pyplot as plt
@@ -106,7 +108,8 @@ class Visualizer(QtWidgets.QWidget):
         self.circuit_size_label = None
         layout = self.build()
         self.layout = layout
-        self.circuit_image_canvas = None
+        self.circuit_image = None
+        self.circuit_image_axes = None
         self.parameter_map = None
         timer = self.setup_timer()
         self.timer = timer
@@ -183,7 +186,8 @@ class Visualizer(QtWidgets.QWidget):
         layout.addWidget(circuit_image_canvas, *(1, 2, 4, 4))
         parameter_map_canvas = Canvas(parameter_map)
         layout.addWidget(parameter_map_canvas, *(5, 0, 4, 6))
-        self.circuit_image_canvas = circuit_image_canvas
+        self.circuit_image = circuit_image
+        self.circuit_image_axes = circuit_image.get_axes()[0]
         self.parameter_map = parameter_map
 
 
@@ -209,7 +213,8 @@ class Visualizer(QtWidgets.QWidget):
         """
         Updates circuit image and plot of gate parameters.
         """
-        circuit_image_canvas = self.circuit_image_canvas
+        circuit_image = self.circuit_image
+        circuit_image_axes = self.circuit_image_axes
         parameter_map = self.parameter_map
         layout = self.layout
         circuit = random_circuit.circuit
@@ -220,21 +225,17 @@ class Visualizer(QtWidgets.QWidget):
                     marker='x', color='r', s=250, linewidths=5)
         parameter_map.canvas.draw()
 
-        #new_circuit_image = circuit.draw(output="mpl")
-        #new_circuit_image_canvas = Canvas(new_circuit_image)
-        #layout.removeWidget(circuit_image_canvas)
-        #circuit_image_canvas.close()
-        #layout.addWidget(new_circuit_image_canvas, *(1, 2, 4, 4))
-        #layout.update()
-        #self.circuit_image_canvas = new_circuit_image_canvas
-
-        #new_circuit_image = circuit.draw(output="mpl")
-        #new_circuit_image_canvas = Canvas(new_circuit_image)
-        #layout.replaceWidget(circuit_image_canvas, new_circuit_image_canvas)
-        #self.circuit_image_canvas = new_circuit_image_canvas
-
-        #plt.figure(circuit_image.number)
-        #circuit.draw(output="mpl")
+        plt.figure(circuit_image.number)
+        plt.cla()
+        qubits, clbits, nodes = UtilOutput(circuit,
+                                           reverse_bits=False,
+                                           justify=None,
+                                           idle_wires=True)
+        drawing = Drawer(qubits, clbits, nodes, ax=circuit_image_axes,
+                         qregs=circuit.qregs, cregs=circuit.cregs)
+        drawing.draw()
+        circuit_image.tight_layout()
+        circuit_image.canvas.draw()
 
 
     def update(self):
