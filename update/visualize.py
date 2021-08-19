@@ -182,6 +182,7 @@ class Visualizer(QtWidgets.QWidget):
         Embeds matplotlib objects into PyQt toplevel Widget.
         """
         layout = self.layout
+        circuit_image.tight_layout()
         circuit_image_canvas = Canvas(circuit_image)
         layout.addWidget(circuit_image_canvas, *(1, 2, 4, 4))
         parameter_map_canvas = Canvas(parameter_map)
@@ -225,8 +226,8 @@ class Visualizer(QtWidgets.QWidget):
                     marker='x', color='r', s=250, linewidths=5)
         parameter_map.canvas.draw()
 
-        plt.figure(circuit_image.number)
-        plt.cla()
+        circuit_image_axes.clear()
+        circuit_image.canvas.draw()
         qubits, clbits, nodes = UtilOutput(circuit,
                                            reverse_bits=False,
                                            justify=None,
