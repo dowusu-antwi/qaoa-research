@@ -183,12 +183,13 @@ class Visualizer(QtWidgets.QWidget):
         """
         layout = self.layout
         circuit_image.tight_layout()
+        circuit_image_axes = circuit_image.get_axes()[0]
         circuit_image_canvas = Canvas(circuit_image)
         layout.addWidget(circuit_image_canvas, *(1, 2, 4, 4))
         parameter_map_canvas = Canvas(parameter_map)
         layout.addWidget(parameter_map_canvas, *(5, 0, 4, 6))
         self.circuit_image = circuit_image
-        self.circuit_image_axes = circuit_image.get_axes()[0]
+        self.circuit_image_axes = circuit_image_axes
         self.parameter_map = parameter_map
 
 
@@ -226,6 +227,7 @@ class Visualizer(QtWidgets.QWidget):
                     marker='x', color='r', s=250, linewidths=5)
         parameter_map.canvas.draw()
 
+        position = circuit_image_axes.get_position()
         circuit_image_axes.clear()
         circuit_image.canvas.draw()
         qubits, clbits, nodes = UtilOutput(circuit,

@@ -54,6 +54,7 @@ class Window(QtWidgets.QWidget):
         layout = self.layout
         visual_circuit_canvas = Canvas(visual_circuit.image)
         layout.addWidget(visual_circuit_canvas, *(0, 0, 1, 1))
+        visual_circuit.image.tight_layout()
         self.visual_circuit = visual_circuit
         self.visual_circuit_canvas = visual_circuit_canvas
 
@@ -66,16 +67,26 @@ class Window(QtWidgets.QWidget):
         visual_circuit_canvas = self.visual_circuit_canvas
         circuit_image = visual_circuit.image
         circuit_axes = visual_circuit.axes
+        position = circuit_axes.get_position()
         circuit_axes.clear()
-        #circuit_image.canvas.draw()
         visual_circuit_canvas.draw()
+        circuit_image.tight_layout()
         circuit = visual_circuit.build()
-        qubits, clbits, nodes = UtilOutput(circuit, reverse_bits=False,
-                                           justify=None, idle_wires=True)
-        drawing = Drawer(qubits, clbits, nodes, ax=circuit_axes,
-                         qregs=circuit.qregs, cregs=circuit.cregs)
+        qubits, clbits, nodes = UtilOutput(circuit,
+                                           reverse_bits=False,
+                                           justify=None,
+                                           idle_wires=True)
+        drawing = Drawer(qubits,
+                         clbits,
+                         nodes,
+                         ax=circuit_axes,
+                         qregs=circuit.qregs,
+                         cregs=circuit.cregs)
         drawing.draw()
-        #circuit_image.canvas.draw()
+        circuit_axes.set_position([0.0,
+                                   0.0,
+                                   position.width,
+                                   position.height])
         visual_circuit_canvas.draw()
  
 
