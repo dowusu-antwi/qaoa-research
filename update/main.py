@@ -442,8 +442,9 @@ class Data:
         folding_factors = self.folding_factors
         extrapolation_order = self.extrapolation_order
 
-        noise_labels = [noise_level]
-        noise_labels.extend([noise_level + " fold x" + str(folding_factor)
+        noise = noise_level.split(" zne")[0]
+        noise_labels = [noise]
+        noise_labels.extend([noise + " fold x" + str(folding_factor)
                              for folding_factor in folding_factors])
         gradient_magnitudes = [self.get_value(num_trial,
                                               noise_label,
@@ -482,8 +483,7 @@ class Simulator:
         Creates a (potentially noisy) backend.
         """
         # Processes noise level label to extract data for building noise model.
-        MAX_NO_FOLD_LABEL_LENGTH = 3
-        fold = len(noise_level) > MAX_NO_FOLD_LABEL_LENGTH
+        fold = "fold" in noise_level
         error_rate = int(noise_level.split('%')[0]) / 100
         folding_scale_factor = (int(noise_level[::-1].split('x')[0])
                                 if fold else None)

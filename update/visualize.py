@@ -9,6 +9,7 @@ from qiskit.visualization.utils import _get_layered_instructions as UtilOutput
 from PyQt5 import QtWidgets, QtCore
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as Canvas
+import time
 
 plt.switch_backend("Qt5Agg")
 
@@ -36,10 +37,11 @@ class SimulatorInterface(Simulator):
         #  noise levels that include noise scaling, respectively.
         if noise_level_option == 1:
             noise_levels = [noise_level for noise_level in data.noise_levels
-                            if "fold" not in noise_level]
+                            if (("fold" not in noise_level) and
+                                ("zne" not in noise_level))]
         elif noise_level_option == 2:
             noise_levels = [noise_level for noise_level in data.noise_levels
-                            if "fold" in noise_level]
+                            if "fold" in noise_level or "zne" in noise_level]
 
         return [(trial, noise_level, circuit_size)
                 for circuit_size in circuit_sizes
@@ -56,25 +58,25 @@ class SimulatorInterface(Simulator):
             return steps.pop(0)
   
 
-    def build_trial(self, trial, noise_level, circuit_size):
+    def run(self, trial, noise_level, circuit_size):
         """
-        Builds environment for executing a trial of QAOA simulation.
+        Runs QAOA simulation given circuit size, trial, and noise level.
         """
         data = self.data
         if data.get_value(trial, noise_level, circuit_size):
             return
         print("circuit size: %s,\t trial num: %s, \t noise level: %s"
                % (circuit_size, trial, noise_level))
+        if "zne" in noise_level:
+            extrapolation = data.extrapolate_zero_noise(trial,
+                                                        noise_level,                                                                    circuit_size)
+            data.store_value(extrapolation,
+                             trial,
+                             noise_level,
+                             circuit_size)
+            return
         gate_parameters = self.initialize_gate_parameters()
         random_circuit = RandomCircuit(circuit_size, gate_parameters)
-        return gate_parameters, random_circuit 
-
-
-    def run(self, trial, noise_level, circuit_size, random_circuit):
-        """
-        Runs QAOA simulation given circuit size, trial, and noise level.
-        """
-        data = self.data
         gate_dimensions = random_circuit.gate_dimensions
         gate_bases = random_circuit.gate_bases
         backend, folding_scale_factor = self.build_backend(noise_level,
@@ -83,12 +85,14 @@ class SimulatorInterface(Simulator):
         random_circuit.set_backend(backend, folding_scale_factor)
         data.save_circuit_qasm(trial, noise_level, circuit_size,
                                random_circuit)
+
         gradient = random_circuit.estimate_gradient()
         gradient_magnitude = np.linalg.norm(gradient)
         data.store_value(gradient_magnitude,
                          trial,
                          noise_level,
                          circuit_size)
+        return gate_parameters, random_circuit
 
 
 class Visualizer(QtWidgets.QWidget):
@@ -251,15 +255,16 @@ class Visualizer(QtWidgets.QWidget):
             timer = self.timer
             timer.stop()
         else:
-            #TODO: add circuit and plot updating...
             trial, noise_level, circuit_size = next_step
             self.update_labels(trial, noise_level, circuit_size)
-            (gate_parameters,
-             random_circuit) = simulator.build_trial(trial,
-                                                     noise_level,
-                                                     circuit_size)
-            self.update_figures(gate_parameters, random_circuit)
-            simulator.run(trial, noise_level, circuit_size, random_circuit)
+            simulator_output = simulator.run(trial,
+                                             noise_level,
+                                             circuit_size)
+            if simulator_output:
+                gate_parameters, random_circuit = simulator_output
+                self.update_figures(gate_parameters, random_circuit)
+            else:
+                time.sleep(1)
 
 
     def run(self):
@@ -301,7 +306,7 @@ def main():
     """
     Creates visualizer and runs simulation.
     """
-    NOISE_LEVEL_OPTION = 1
+    NOISE_LEVEL_OPTION = 0
     simulator = SimulatorInterface(NOISE_LEVEL_OPTION)
     visualizer = Visualizer(simulator)
     circuit_image = build_circuit_image()
