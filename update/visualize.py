@@ -26,7 +26,7 @@ class SimulatorInterface(Simulator):
         self.steps = steps
  
 
-    def build_steps(self, noise_level_option):
+    def build_steps(self, simulation_option):
         """
         Builds list of steps to traverse when running simulation.
         """
@@ -35,11 +35,11 @@ class SimulatorInterface(Simulator):
 
         # These options are for simulating with no noise scaling or only those
         #  noise levels that include noise scaling, respectively.
-        if noise_level_option == 1:
+        if simulation_option == 1:
             noise_levels = [noise_level for noise_level in data.noise_levels
                             if (("fold" not in noise_level) and
                                 ("zne" not in noise_level))]
-        elif noise_level_option == 2:
+        elif simulation_option == 2:
             noise_levels = [noise_level for noise_level in data.noise_levels
                             if "fold" in noise_level or "zne" in noise_level]
 
