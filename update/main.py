@@ -15,6 +15,7 @@ from qiskit.providers.aer import QasmSimulator
 from qiskit.providers.aer.noise import NoiseModel, depolarizing_error
 from mitiq.zne.scaling import fold_gates_from_right
 from mitiq.zne.inference import PolyFactory
+from datetime import datetime
 
 class RandomCircuit:
     """
@@ -266,6 +267,10 @@ class Data:
         qasm_data = self.initialize_data_array()
         self.qasm_data = qasm_data.astype("object")
 
+        # Creates empty savefile to store data.
+        self.data_filepath = "data/"
+        self.savefilename = self.open_savefile()
+
 
     def set_simulation_constants(self):
         """
@@ -362,13 +367,7 @@ class Data:
         position = self.get_position(*data_entry_label)
         raw_data[position] = value
         accessed_data_entries = self.accessed_data_entries
-        accessed_data_entries.add(data_entry_label)
-        
-        qasm = self.get_circuit_qasm(trial, noise_level, circuit_size)
-        str_data_entry = ("circuit size: %s,\t trial num: %s, \t noise level: "\
-                          "%s, \t value: %s,\t qasm: %s\n"\
-                          % (circuit_size, trial, noise_level, value, qasm))
-        
+        accessed_data_entries.add(data_entry_label) 
 
 
     def get_value(self, trial, noise_level, circuit_size):
@@ -464,6 +463,41 @@ class Data:
         return extrapolator.extrapolate(scale_factors,
                                         gradient_magnitudes,
                                         order=extrapolation_order)
+
+
+    def open_savefile(self, filename=None):
+        """
+        Opens savefile (either a new empty file or given filename) to write
+         data to.
+        """
+        filepath = self.data_filepath
+        if not filename:
+            timestamp = datetime.now()
+            filename = timestamp.strftime("%Y-%b-%d--%H:%M") + ".txt"
+        print("Opening file %s" % filename)
+        savefile = open(filepath + filename, 'a')
+        self.savefile = savefile
+        return filename
+
+
+    def write_to_savefile(self, value, trial, noise_level, circuit_size):
+        """
+        Stores data in saved file.
+        """
+        savefile = self.savefile
+        qasm = self.get_circuit_qasm(trial, noise_level, circuit_size)
+        str_data_entry = ("circuit size: %s,\t trial num: %s,\t noise level: "\
+                          "%s,\t\t value: %s,\t qasm: %s"\
+                          % (circuit_size, trial, noise_level, value, qasm))
+        savefile.write(str_data_entry.replace('\n', '\\n') + '\n')
+
+
+    def close_savefile(self):
+        """
+        Closes data savefile.
+        """
+        savefile = self.savefile
+        savefile.close()
 
 
 class Simulator:
@@ -604,8 +638,6 @@ class Simulator:
         data = self.data 
         if data.get_value(trial, noise_level, circuit_size):
             return
-        print("circuit size: %s,\t trial num: %s, \t noise level: %s"
-               % (circuit_size, trial, noise_level))
         if "zne" in noise_level:
             extrapolation = data.extrapolate_zero_noise(trial,
                                                         noise_level,                                                                    circuit_size)
@@ -615,17 +647,24 @@ class Simulator:
                                                             noise_level,
                                                             circuit_size)
             value = gradient_magnitude
-        data.store_value(value,
-                         trial,
-                         noise_level,
-                         circuit_size)
+        print("circuit size: %s,\t "\
+              "trial num: %s,\t "\
+              "noise level: %s,\t\t "\
+              "value: %s"
+               % (circuit_size, trial, noise_level, value))
+        data.store_value(value, trial, noise_level, circuit_size)
+        data.write_to_savefile(value, trial, noise_level, circuit_size)
 
 
     def reset(self, option):
         """
         Resets simulation given new option.
         """
-        #TODO: re-opens file to write data to
+        # Re-opens file to write data to.
+        data = self.data
+        filename = data.savefilename
+        print("Reopening %s" % filename)
+        data.open_savefile(filename)
         self.steps = self.build_steps(option)
 
 
@@ -633,7 +672,8 @@ class Simulator:
         """
         Closes file saving simulation data.
         """
-        #TODO: closes file with written data
+        data = self.data
+        data.close_savefile()
 
 
 def simulate(simulator=None, option=0):
@@ -672,10 +712,8 @@ def main():
     #  0) all noise levels,
     #  1) noise levels without noise scaling,
     #  2) noise levels with noise scaling.
-    simulator = simulate(option=1)
-    data = simulator.data
-    return data
+    return simulate(option=1)
 
 
 if __name__ == "__main__":
-    data = main()
+    simulator = main()
