@@ -337,7 +337,7 @@ class Data:
         return dimension_ranges
 
 
-    def get_position(self, num_trial, noise_level, circuit_size):
+    def get_position(self, trial, noise_level, circuit_size):
         """
         Calculates position in numpy array corresponding to given trial number, 
          noise level, and circuit size.
@@ -345,36 +345,39 @@ class Data:
         # Orders trial number, noise level, and circuit size labels according to
         #  the order in which corresponding ranges appear in saved variable.
         dimension_ranges = self.dimension_ranges
-        data_entry_label = (num_trial, noise_level, circuit_size)
+        data_entry_label = (trial, noise_level, circuit_size)
         position = tuple(dimension_ranges[idx].index(data_entry_label[idx])
                          for idx in range(len(data_entry_label)))
         return position
 
 
-    def store_value(self, value, num_trial, noise_level, circuit_size):
+    def store_value(self, value, trial, noise_level, circuit_size):
         """
         Stores new data entry value given position indicated by trial number,
          noise level, and circuit size.
         """
         raw_data = self.raw_data
         
-        data_entry_label = (num_trial, noise_level, circuit_size)
+        data_entry_label = (trial, noise_level, circuit_size)
         position = self.get_position(*data_entry_label)
         raw_data[position] = value
         accessed_data_entries = self.accessed_data_entries
         accessed_data_entries.add(data_entry_label)
-        # TODO: find a nicer way to write this out and store it
-        qasm = self.get_circuit_qasm(num_trial, noise_level, circuit_size)
-        str_data_entry = "circuit size: %s,\t trial num: %s, \t noise level: %s, \t value: %s,\t qasm: %s" % (circuit_size, trial, noise_level, value, qasm))
+        
+        qasm = self.get_circuit_qasm(trial, noise_level, circuit_size)
+        str_data_entry = ("circuit size: %s,\t trial num: %s, \t noise level: "\
+                          "%s, \t value: %s,\t qasm: %s\n"\
+                          % (circuit_size, trial, noise_level, value, qasm))
+        
 
 
-    def get_value(self, num_trial, noise_level, circuit_size):
+    def get_value(self, trial, noise_level, circuit_size):
         """
         Gets data entry value given position indicated by trial number, noise
          level, and circuit size.
         """
         raw_data = self.raw_data
-        data_entry_label = (num_trial, noise_level, circuit_size)
+        data_entry_label = (trial, noise_level, circuit_size)
         accessed_data_entries = self.accessed_data_entries
         if data_entry_label in accessed_data_entries:
             position = self.get_position(*data_entry_label)
@@ -382,27 +385,25 @@ class Data:
             return value
 
 
-    def save_circuit_qasm(self, num_trial, noise_level, circuit_size,
-                          random_circuit):
+    def save_circuit_qasm(self, trial, noise_level, circuit_size, circuit):
         """
         Converts circuit to QASM and saves it to position indicated by trial
          number, noise level, and circuit size.
 
         Note: this saves QASM of raw circuit *before* folding.
         """
-        circuit = random_circuit.circuit
         qasm = circuit.qasm()
-        position = self.get_position(num_trial, noise_level, circuit_size)
+        position = self.get_position(trial, noise_level, circuit_size)
         qasm_data = self.qasm_data
         qasm_data[position] = qasm
 
 
-    def get_circuit_qasm(self, num_trial, noise_level, circuit_size):
+    def get_circuit_qasm(self, trial, noise_level, circuit_size):
         """
         Returns circuit QASM for position indicated by trial number,
          noise level, and circuit size.
         """
-        position = self.get_position(num_trial, noise_level, circuit_size)
+        position = self.get_position(trial, noise_level, circuit_size)
         qasm_data = self.qasm_data
         return qasm_data[position]
 
@@ -437,7 +438,7 @@ class Data:
         return graph_data
 
 
-    def extrapolate_zero_noise(self, num_trial, noise_level, circuit_size):
+    def extrapolate_zero_noise(self, trial, noise_level, circuit_size):
         """
         Extrapolates computed gradient magnitudes for folded noise levels to
          zero-noise limit.
@@ -452,7 +453,7 @@ class Data:
         noise_labels = [noise]
         noise_labels.extend([noise + " fold x" + str(folding_factor)
                              for folding_factor in folding_factors])
-        gradient_magnitudes = [self.get_value(num_trial,
+        gradient_magnitudes = [self.get_value(trial,
                                               noise_label,
                                               circuit_size)
                                for noise_label in noise_labels]
@@ -470,9 +471,13 @@ class Simulator:
     Builds and executes necessary circuit elements for a QAOA circuit simulator,
      given a fixed circuit size.
     """
-    def __init__(self, max_gate_parameters, simulation_option):
+    def __init__(self, simulation_option):
+        # Generates empty dataset large enough to store all possible data.
+        #  Access data elements by index, where each field (circuit width,
+        #  trial, noise level) is mapped to an index (i.e.,
+        #  data[circuit width][trial][noise level]).
         self.data = Data()
-        self.max_gate_parameters = max_gate_parameters
+        self.max_gate_parameters = self.data.max_gate_parameters
         self.steps = self.build_steps(simulation_option)
         self.trial = None
         self.circuit_size = None
@@ -522,11 +527,11 @@ class Simulator:
         Gets next circuit size, trial, and noise level to simulate.
         """
         steps = self.steps
-        return steps.pop(0) if len(steps) > 0
+        return steps.pop(0) if len(steps) > 0 else None
 
 
     def build_steps(self, simulation_option):
-       """"
+        """
         Builds list of steps to traverse when running simulation.
         """
         data = self.data
@@ -535,15 +540,15 @@ class Simulator:
         # These options are for simulating with no noise scaling or only those
         #  noise levels that include noise scaling, respectively.
         if simulation_option == 1:
-            noise_level_filter = lambda noise_lvl:
-                                 not (("fold" in noise_lvl) or
-                                      ("zne" in noise_lvl))
+            noise_level_filter = (lambda noise_lvl:
+                                  not (("fold" in noise_lvl) or
+                                       ("zne" in noise_lvl)))
         elif simulation_option == 2:
-            noise_level_filter = lambda noise_lvl:
-                                 "fold" in noise_lvl or "zne" in noise_lvl
+            noise_level_filter = (lambda noise_lvl:
+                                  "fold" in noise_lvl or "zne" in noise_lvl)
 
         noise_levels = [noise_level for noise_level in data.noise_levels
-                        if noise_level_filter(noise_level)
+                        if noise_level_filter(noise_level)]
 
         return [(trial, noise_level, circuit_size)
                 for circuit_size in circuit_sizes
@@ -570,17 +575,18 @@ class Simulator:
         return self.random_circuit
 
 
-    def compute_gradient_magnitude(self, trial, noise_level, circuit_size)
+    def execute_trial_circuit(self, trial, noise_level, circuit_size):
         """
-        Computes magnitude of cost function gradient.
+        Executes circuit and computes magnitude of estimated cost function
+         gradient.
         """
-        data = self.data
         random_circuit = self.get_random_circuit(trial, circuit_size)
+        data = self.data
+        circuit = random_circuit.circuit
+        data.save_circuit_qasm(trial, noise_level, circuit_size, circuit)
         backend, folding_scale_factor = self.build_backend(noise_level,
                                                            random_circuit)
         random_circuit.set_backend(backend, folding_scale_factor)
-        data.save_circuit_qasm(trial, noise_level, circuit_size,
-                               random_circuit)
         gradient = random_circuit.estimate_gradient()
         gradient_magnitude = np.linalg.norm(gradient)
         return gradient_magnitude
@@ -594,9 +600,8 @@ class Simulator:
          with a new set of gate parameters - but given a single circuit for many
          trials, value still varies, likely due to randomness of execution (?)
         """
-        data = self.data 
-
         # Skips data entries in which values have already been stored.
+        data = self.data 
         if data.get_value(trial, noise_level, circuit_size):
             return
         print("circuit size: %s,\t trial num: %s, \t noise level: %s"
@@ -606,9 +611,9 @@ class Simulator:
                                                         noise_level,                                                                    circuit_size)
             value = extrapolation
         else:
-            gradient_magnitude = self.compute_gradient_magnitude(trial,
-                                                                 noise_level,
-                                                                 circuit_size)
+            gradient_magnitude = self.execute_trial_circuit(trial,
+                                                            noise_level,
+                                                            circuit_size)
             value = gradient_magnitude
         data.store_value(value,
                          trial,
@@ -616,7 +621,22 @@ class Simulator:
                          circuit_size)
 
 
-def simulate(data, option=0):
+    def reset(self, option):
+        """
+        Resets simulation given new option.
+        """
+        #TODO: re-opens file to write data to
+        self.steps = self.build_steps(option)
+
+
+    def clean(self):
+        """
+        Closes file saving simulation data.
+        """
+        #TODO: closes file with written data
+
+
+def simulate(simulator=None, option=0):
     """
     Runs QAOA simulation for a range of circuit sizes (i.e., circuit width:
      number of qubits), updating given data structure.
@@ -626,30 +646,21 @@ def simulate(data, option=0):
                    those that don't include any noise scaling (1), or only those
                    that include unitary folding for noise scaling (2).
     """
-    # Iterate over range of circuit sizes, building Erdos-Renyi graph for each
-    #  size.
-    num_trials = data.num_trials
-    circuit_sizes = data.circuit_sizes
-    max_gate_parameters = data.max_gate_parameters
-    noise_levels = data.noise_levels
-
-    # These options are for simulating with no noise scaling or only those noise
-    #  levels that include noise scaling, respectively. 
-    if option == 1:
-        noise_levels = [noise_level for noise_level in data.noise_levels
-                        if (("fold" not in noise_level) and
-                            ("zne" not in noise_level))]
-    elif option == 2:
-        noise_levels = [noise_level for noise_level in data.noise_levels
-                        if "fold" in noise_level or "zne" in noise_level]
-
-    for circuit_size in circuit_sizes:
-        # Per circuit size, iterates over a given number of trials.
-        simulator = Simulator(circuit_size, max_gate_parameters, noise_levels)
-        for trial in range(num_trials):
-            # Per trial, iterates over a given number of error rates and runs
-            #  QAOA simulation given circuit size and error rate.
-            simulator.run(trial, data)
+    if simulator == None:
+        simulator = Simulator(option)
+    else:
+        simulator.reset(option)
+    
+    next_step = simulator.get_next_step()
+    while next_step:
+        # Per circuit size, iterates over a given number of trials. Per trial,
+        #  iterates over a given number of error rates and runs QAOA simulation
+        #  given circuit size and error rate.
+        trial, noise_level, circuit_size = next_step
+        simulator.run(trial, noise_level, circuit_size)
+        next_step = simulator.get_next_step()
+    simulator.clean()
+    return simulator
 
 
 def main():
@@ -657,17 +668,12 @@ def main():
     Simulates MAXCUT optimization (i.e., computing cost function values by
      simulating execution of quantum circuits).
     """
-    # Generates empty dataset large enough to store all possible data. Access
-    #  data elements by index, where each field (circuit width, trial, noise
-    #  level) is mapped to an index (i.e., data[circuit width][trial][noise
-    #  level]).
-    data = Data()
-
     # Chooses one of three simulation options:
     #  0) all noise levels,
     #  1) noise levels without noise scaling,
     #  2) noise levels with noise scaling.
-    simulate(data, option=1)
+    simulator = simulate(option=1)
+    data = simulator.data
     return data
 
 
