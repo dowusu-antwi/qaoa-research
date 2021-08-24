@@ -232,7 +232,7 @@ class Data:
     """
     Stores raw data and includes methods to extract processed data.
     """
-    def __init__(self):
+    def __init__(self, savefile_option):
         constants = self.set_simulation_constants()
         (NUM_TRIALS,
          CIRCUIT_SIZES,
@@ -269,6 +269,7 @@ class Data:
 
         # Creates empty savefile to store data.
         self.data_filepath = "data/"
+        self.savefile_option = savefile_option
         self.savefilename = self.open_savefile()
 
 
@@ -470,11 +471,13 @@ class Data:
         Opens savefile (either a new empty file or given filename) to write
          data to.
         """
+        savefile_option = self.savefile_option
+        if savefile_option == 1:
+            return
         filepath = self.data_filepath
         if not filename:
             timestamp = datetime.now()
             filename = timestamp.strftime("%Y-%b-%d--%H:%M") + ".txt"
-        print("Opening file %s" % filename)
         savefile = open(filepath + filename, 'a')
         self.savefile = savefile
         return filename
@@ -484,6 +487,9 @@ class Data:
         """
         Stores data in saved file.
         """
+        savefile_option = self.savefile_option
+        if savefile_option == 1:
+            return
         savefile = self.savefile
         qasm = self.get_circuit_qasm(trial, noise_level, circuit_size)
         str_data_entry = ("circuit size: %s,\t trial num: %s,\t noise level: "\
@@ -496,6 +502,9 @@ class Data:
         """
         Closes data savefile.
         """
+        savefile_option = self.savefile_option
+        if savefile_option == 1:
+            return
         savefile = self.savefile
         savefile.close()
 
@@ -505,14 +514,14 @@ class Simulator:
     Builds and executes necessary circuit elements for a QAOA circuit simulator,
      given a fixed circuit size.
     """
-    def __init__(self, simulation_option):
+    def __init__(self, noise_level_option, savefile_option):
         # Generates empty dataset large enough to store all possible data.
         #  Access data elements by index, where each field (circuit width,
         #  trial, noise level) is mapped to an index (i.e.,
         #  data[circuit width][trial][noise level]).
-        self.data = Data()
+        self.data = Data(savefile_option)
         self.max_gate_parameters = self.data.max_gate_parameters
-        self.steps = self.build_steps(simulation_option)
+        self.steps = self.build_steps(noise_level_option)
         self.trial = None
         self.circuit_size = None
         self.random_circuit = None
@@ -556,14 +565,6 @@ class Simulator:
                 folding_scale_factor)
 
 
-    def get_next_step(self):
-        """
-        Gets next circuit size, trial, and noise level to simulate.
-        """
-        steps = self.steps
-        return steps.pop(0) if len(steps) > 0 else None
-
-
     def build_steps(self, simulation_option):
         """
         Builds list of steps to traverse when running simulation.
@@ -573,7 +574,9 @@ class Simulator:
 
         # These options are for simulating with no noise scaling or only those
         #  noise levels that include noise scaling, respectively.
-        if simulation_option == 1:
+        if simulation_option == 0:
+            noise_level_filter = lambda noise_lvl: True
+        elif simulation_option == 1:
             noise_level_filter = (lambda noise_lvl:
                                   not (("fold" in noise_lvl) or
                                        ("zne" in noise_lvl)))
@@ -588,6 +591,14 @@ class Simulator:
                 for circuit_size in circuit_sizes
                 for trial in trials
                 for noise_level in noise_levels]
+
+
+    def get_next_step(self):
+        """
+        Gets next circuit size, trial, and noise level to simulate.
+        """
+        steps = self.steps
+        return steps.pop(0) if len(steps) > 0 else None
         
 
     def get_random_circuit(self, trial, circuit_size):
@@ -649,14 +660,14 @@ class Simulator:
             value = gradient_magnitude
         print("circuit size: %s,\t "\
               "trial num: %s,\t "\
-              "noise level: %s,\t\t "\
+              "noise level: %s,\t "\
               "value: %s"
                % (circuit_size, trial, noise_level, value))
         data.store_value(value, trial, noise_level, circuit_size)
         data.write_to_savefile(value, trial, noise_level, circuit_size)
 
 
-    def reset(self, option):
+    def reset(self, noise_level_option, savefile_option):
         """
         Resets simulation given new option.
         """
@@ -664,8 +675,8 @@ class Simulator:
         data = self.data
         filename = data.savefilename
         print("Reopening %s" % filename)
-        data.open_savefile(filename)
-        self.steps = self.build_steps(option)
+        data.open_savefile(filename, savefile_option)
+        self.steps = self.build_steps(noise_level_option)
 
 
     def clean(self):
@@ -676,7 +687,7 @@ class Simulator:
         data.close_savefile()
 
 
-def simulate(simulator=None, option=0):
+def simulate(simulator=None, noise_level_option=0, savefile_option=0):
     """
     Runs QAOA simulation for a range of circuit sizes (i.e., circuit width:
      number of qubits), updating given data structure.
@@ -687,9 +698,9 @@ def simulate(simulator=None, option=0):
                    that include unitary folding for noise scaling (2).
     """
     if simulator == None:
-        simulator = Simulator(option)
+        simulator = Simulator(noise_level_option, savefile_option)
     else:
-        simulator.reset(option)
+        simulator.reset(noise_level_option, savefile_option)
     
     next_step = simulator.get_next_step()
     while next_step:
@@ -708,11 +719,15 @@ def main():
     Simulates MAXCUT optimization (i.e., computing cost function values by
      simulating execution of quantum circuits).
     """
-    # Chooses one of three simulation options:
+    # Chooses one of three noise level simulation options:
     #  0) all noise levels,
     #  1) noise levels without noise scaling,
-    #  2) noise levels with noise scaling.
-    return simulate(option=1)
+    #  2) noise levels with noise scaling,
+    #
+    # And one of two save file simulation options:
+    #  0) save data to a text file,
+    #  1) don't save data.
+    return simulate(noise_level_option=1, savefile_option=1)
 
 
 if __name__ == "__main__":

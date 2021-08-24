@@ -14,87 +14,6 @@ import time
 plt.switch_backend("Qt5Agg")
 
 
-class SimulatorInterface(Simulator):
-    """
-    Interfaces simulator with visualizer, reimplementing its execution.
-    """
-    def __init__(self, noise_level_option):
-        data = Data()
-        self.max_gate_parameters = data.max_gate_parameters
-        self.data = data
-        steps = self.build_steps(noise_level_option)
-        self.steps = steps
- 
-
-    def build_steps(self, simulation_option):
-        """
-        Builds list of steps to traverse when running simulation.
-        """
-        data = self.data
-        trials, noise_levels, circuit_sizes = data.dimension_ranges
-
-        # These options are for simulating with no noise scaling or only those
-        #  noise levels that include noise scaling, respectively.
-        if simulation_option == 1:
-            noise_levels = [noise_level for noise_level in data.noise_levels
-                            if (("fold" not in noise_level) and
-                                ("zne" not in noise_level))]
-        elif simulation_option == 2:
-            noise_levels = [noise_level for noise_level in data.noise_levels
-                            if "fold" in noise_level or "zne" in noise_level]
-
-        return [(trial, noise_level, circuit_size)
-                for circuit_size in circuit_sizes
-                for trial in trials
-                for noise_level in noise_levels]
-
-
-    def get_next_step(self):
-        """
-        Gets next circuit size, trial, and noise level to simulate.
-        """
-        steps = self.steps
-        if len(steps) > 0:
-            return steps.pop(0)
-  
-
-    def run(self, trial, noise_level, circuit_size):
-        """
-        Runs QAOA simulation given circuit size, trial, and noise level.
-        """
-        data = self.data
-        if data.get_value(trial, noise_level, circuit_size):
-            return
-        print("circuit size: %s,\t trial num: %s, \t noise level: %s"
-               % (circuit_size, trial, noise_level))
-        if "zne" in noise_level:
-            extrapolation = data.extrapolate_zero_noise(trial,
-                                                        noise_level,                                                                    circuit_size)
-            data.store_value(extrapolation,
-                             trial,
-                             noise_level,
-                             circuit_size)
-            return
-        gate_parameters = self.initialize_gate_parameters()
-        random_circuit = RandomCircuit(circuit_size, gate_parameters)
-        gate_dimensions = random_circuit.gate_dimensions
-        gate_bases = random_circuit.gate_bases
-        backend, folding_scale_factor = self.build_backend(noise_level,
-                                                           gate_dimensions,
-                                                           gate_bases)
-        random_circuit.set_backend(backend, folding_scale_factor)
-        data.save_circuit_qasm(trial, noise_level, circuit_size,
-                               random_circuit)
-
-        gradient = random_circuit.estimate_gradient()
-        gradient_magnitude = np.linalg.norm(gradient)
-        data.store_value(gradient_magnitude,
-                         trial,
-                         noise_level,
-                         circuit_size)
-        return gate_parameters, random_circuit
-
-
 class Visualizer(QtWidgets.QWidget):
     """
     Visualizes simulation.
@@ -105,7 +24,7 @@ class Visualizer(QtWidgets.QWidget):
         """
         self.application_manager = QtWidgets.QApplication([])
         super().__init__()
-        self.resize(1500, 900)
+        self.resize(1920, 1080)
         self.simulator = simulator
         self.trial_label = None
         self.noise_level_label = None
@@ -134,7 +53,7 @@ class Visualizer(QtWidgets.QWidget):
         # Simulation steps are slow as is, so they'll take as long as they need
         #  to before moving on to the next step...
         timer = QtCore.QTimer(self)
-        TIMESTEP = 1                        # in milliseconds
+        TIMESTEP = 1000                        # in milliseconds
         timer.start(TIMESTEP)
         timer.timeout.connect(self.update)
         return timer
@@ -254,17 +173,15 @@ class Visualizer(QtWidgets.QWidget):
         if not next_step:
             timer = self.timer
             timer.stop()
-        else:
-            trial, noise_level, circuit_size = next_step
-            self.update_labels(trial, noise_level, circuit_size)
-            simulator_output = simulator.run(trial,
-                                             noise_level,
-                                             circuit_size)
-            if simulator_output:
-                gate_parameters, random_circuit = simulator_output
-                self.update_figures(gate_parameters, random_circuit)
-            else:
-                time.sleep(1)
+            return 
+        trial, noise_level, circuit_size = next_step
+        self.update_labels(trial, noise_level, circuit_size)
+        simulator.run(trial,
+                      noise_level,
+                      circuit_size)
+        random_circuit = simulator.random_circuit
+        gate_parameters = random_circuit.gate_parameters
+        self.update_figures(gate_parameters, random_circuit)
 
 
     def run(self):
@@ -306,8 +223,9 @@ def main():
     """
     Creates visualizer and runs simulation.
     """
-    NOISE_LEVEL_OPTION = 0
-    simulator = SimulatorInterface(NOISE_LEVEL_OPTION)
+    SIMULATION_OPTION = 0
+    SAVEFILE_OPTION = 1
+    simulator = Simulator(SIMULATION_OPTION, SAVEFILE_OPTION)
     visualizer = Visualizer(simulator)
     circuit_image = build_circuit_image()
     max_gate_parameters = simulator.max_gate_parameters
