@@ -16,6 +16,7 @@ from qiskit.providers.aer.noise import NoiseModel, depolarizing_error
 from mitiq.zne.scaling import fold_gates_from_right
 from mitiq.zne.inference import PolyFactory
 from datetime import datetime
+import re
 
 class RandomCircuit:
     """
@@ -498,6 +499,28 @@ class Data:
         savefile.write(str_data_entry.replace('\n', '\\n') + '\n')
 
 
+    def load_savefile(self, filename):
+        """
+        Loads data from opened savefile.
+        """
+        filepath = self.data_filepath
+        savefile = open(filepath + filename, 'r')
+        line = savefile.readline()
+        while line:
+            line_elements = re.split(',\t+', line)
+            circuit_size, trial, noise_lvl, value, qasm = line_elements
+            circuit_size = int(re.search('[\d\.]+', circuit_size).group())
+            trial = int(re.search('\d+', trial).group())
+            noise_lvl = re.search('\d+%( fold x\d+)?( zne)?', noise_lvl).group()
+            value = float(re.search('[\d\.]+', value).group())
+            print("circuit size: %s,\t trial num: %s,\t noise level: "\
+                  "%s,\t\t value: %s"\
+                   % (circuit_size, trial, noise_lvl, value))
+            self.store_value(value, trial, noise_lvl, circuit_size)
+            line = savefile.readline()
+        savefile.close()
+
+
     def close_savefile(self):
         """
         Closes data savefile.
@@ -583,6 +606,8 @@ class Simulator:
         elif simulation_option == 2:
             noise_level_filter = (lambda noise_lvl:
                                   "fold" in noise_lvl or "zne" in noise_lvl)
+        elif simulation_option == 3:
+            noise_level_filter = lambda noise_lvl: False
 
         noise_levels = [noise_level for noise_level in data.noise_levels
                         if noise_level_filter(noise_level)]
@@ -723,11 +748,12 @@ def main():
     #  0) all noise levels,
     #  1) noise levels without noise scaling,
     #  2) noise levels with noise scaling,
+    #  3) no noise levels (i.e., no simulation, load data (?))
     #
     # And one of two save file simulation options:
     #  0) save data to a text file,
     #  1) don't save data.
-    return simulate(noise_level_option=1, savefile_option=1)
+    return simulate(noise_level_option=3, savefile_option=1)
 
 
 if __name__ == "__main__":
