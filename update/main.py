@@ -22,7 +22,7 @@ class RandomCircuit:
     """
     Random quantum circuit built using Erdos-Renyi model.
     """
-    def __init__(self, num_qubits, gate_parameters):
+    def __init__(self, num_qubits, gate_parameters, qasm=None):
         constants = self.set_circuit_constants()
         (EDGE_PROBABILITY,
          SHOTS,
@@ -44,7 +44,7 @@ class RandomCircuit:
         self.gate_parameters = gate_parameters
         connectivity = self.create_connectivity(num_qubits, EDGE_PROBABILITY)
         self.connectivity = connectivity
-        self.circuit = self.build_circuit(gate_parameters)
+        self.circuit = self.build_circuit(gate_parameters, circuit_qasm=qasm)
         self.backend = None
         self.folding_scale_factor = None
 
@@ -76,10 +76,16 @@ class RandomCircuit:
         return graph
 
 
-    def build_circuit(self, gate_parameters, folding_scale_factor=None):
+    def build_circuit(self, gate_parameters, circuit_qasm=None,
+                      folding_scale_factor=None):
         """
         Given connectivity, build QAOA circuit.
         """
+        # Given a QASM string, builds circuit directly. Otherwise, build using
+        #  QAOA topology.
+        if circuit_qasm:
+            return QuantumCircuit.from_qasm_str(circuit_qasm)
+
         num_qubits = self.num_qubits
         connectivity = self.connectivity
 
@@ -409,6 +415,34 @@ class Data:
         return qasm_data[position]
 
 
+    def extrapolate_zero_noise(self, trial, noise_level, circuit_size):
+        """
+        Extrapolates computed gradient magnitudes for folded noise levels to
+         zero-noise limit.
+        
+        (by np.polyfit under the hood; see https://mitiq.readthedocs.io)
+        """
+        extrapolator = self.extrapolator
+        folding_factors = self.folding_factors
+        extrapolation_order = self.extrapolation_order
+
+        noise = noise_level.split(" zne")[0]
+        noise_labels = [noise]
+        noise_labels.extend([noise + " fold x" + str(folding_factor)
+                             for folding_factor in folding_factors])
+        gradient_magnitudes = [self.get_value(trial,
+                                              noise_label,
+                                              circuit_size)
+                               for noise_label in noise_labels]
+
+        UNIT_SCALE = 1.0 # required for polynomial extrapolation
+        scale_factors = [UNIT_SCALE]
+        scale_factors.extend(folding_factors)
+        return extrapolator.extrapolate(scale_factors,
+                                        gradient_magnitudes,
+                                        order=extrapolation_order)
+
+
     def extract_graph_data(self, noise_levels_filter=None):
         """
         Gets input / output data for matplotlib plotting, given a set of
@@ -437,34 +471,6 @@ class Data:
                 output_data = trial_averaged_data[noise_level_index]
                 graph_data[noise_level] = (circuit_sizes, output_data)
         return graph_data
-
-
-    def extrapolate_zero_noise(self, trial, noise_level, circuit_size):
-        """
-        Extrapolates computed gradient magnitudes for folded noise levels to
-         zero-noise limit.
-        
-        (by np.polyfit under the hood; see https://mitiq.readthedocs.io)
-        """
-        extrapolator = self.extrapolator
-        folding_factors = self.folding_factors
-        extrapolation_order = self.extrapolation_order
-
-        noise = noise_level.split(" zne")[0]
-        noise_labels = [noise]
-        noise_labels.extend([noise + " fold x" + str(folding_factor)
-                             for folding_factor in folding_factors])
-        gradient_magnitudes = [self.get_value(trial,
-                                              noise_label,
-                                              circuit_size)
-                               for noise_label in noise_labels]
-
-        UNIT_SCALE = 1.0 # required for polynomial extrapolation
-        scale_factors = [UNIT_SCALE]
-        scale_factors.extend(folding_factors)
-        return extrapolator.extrapolate(scale_factors,
-                                        gradient_magnitudes,
-                                        order=extrapolation_order)
 
 
     def open_savefile(self, filename=None):
@@ -626,7 +632,7 @@ class Simulator:
         return steps.pop(0) if len(steps) > 0 else None
         
 
-    def get_random_circuit(self, trial, circuit_size):
+    def get_random_circuit(self, trial, circuit_size, qasm=None):
         """
         Gets current random circuit, updating if necessary.
         """
@@ -638,11 +644,18 @@ class Simulator:
                           (circuit_size != current_circuit_size))
         if update_circuit:
             gate_parameters = self.initialize_gate_parameters()
-            random_circuit = RandomCircuit(circuit_size, gate_parameters)
+            random_circuit = RandomCircuit(circuit_size, gate_parameters, qasm)
             self.trial = trial
             self.circuit_size = circuit_size
             self.random_circuit = random_circuit
         return self.random_circuit
+
+
+    def get_data(self):
+        """
+        Returns stored data object.
+        """
+        return self.data
 
 
     def execute_trial_circuit(self, trial, noise_level, circuit_size):
@@ -662,7 +675,7 @@ class Simulator:
         return gradient_magnitude
 
 
-    def run(self, trial, noise_level, circuit_size):
+    def run(self, trial, noise_level, circuit_size, data_stored=False):
         """
         Runs QAOA simulation given trial, circuit size, and noise level.
 
@@ -670,8 +683,20 @@ class Simulator:
          with a new set of gate parameters - but given a single circuit for many
          trials, value still varies, likely due to randomness of execution (?)
         """
+
+
+        str_format = "|circuit size: {a:<2d}\t"\
+                     "|trial: {b:<3d}\t"\
+                     "|noise level: {c:<12}\t"\
+                     "|value: {d:.4f}".format
         # Skips data entries in which values have already been stored.
         data = self.data 
+        if data_stored:
+            value = data.get_value(trial, noise_level, circuit_size)
+            #qasm = data.get_circuit_qasm(trial, noise_level, circuit_size)
+            #self.set_circuit()....?
+            print(str_format(a=circuit_size, b=trial, c=noise_level, d=value))
+            return
         if data.get_value(trial, noise_level, circuit_size):
             return
         if "zne" in noise_level:
@@ -683,11 +708,7 @@ class Simulator:
                                                             noise_level,
                                                             circuit_size)
             value = gradient_magnitude
-        print("circuit size: %s,\t "\
-              "trial num: %s,\t "\
-              "noise level: %s,\t "\
-              "value: %s"
-               % (circuit_size, trial, noise_level, value))
+        print(str_format(a=circuit_size, b=trial, c=noise_level, d=value))
         data.store_value(value, trial, noise_level, circuit_size)
         data.write_to_savefile(value, trial, noise_level, circuit_size)
 

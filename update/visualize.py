@@ -18,7 +18,7 @@ class Visualizer(QtWidgets.QWidget):
     """
     Visualizes simulation.
     """
-    def __init__(self, simulator):
+    def __init__(self, simulator, SIMULATION_OPTION):
         """
         Initializes necessary attributes and methods.
         """
@@ -26,6 +26,7 @@ class Visualizer(QtWidgets.QWidget):
         super().__init__()
         self.resize(1920, 1080)
         self.simulator = simulator
+        self.data_stored = (SIMULATION_OPTION == 3)
         self.trial_label = None
         self.noise_level_label = None
         self.circuit_size_label = None
@@ -168,6 +169,7 @@ class Visualizer(QtWidgets.QWidget):
         """
         Takes a simulation step, updating labels, circuit, and parameter map.
         """
+        data_stored = self.data_stored
         simulator = self.simulator
         next_step = simulator.get_next_step()
         if not next_step:
@@ -178,7 +180,8 @@ class Visualizer(QtWidgets.QWidget):
         self.update_labels(trial, noise_level, circuit_size)
         simulator.run(trial,
                       noise_level,
-                      circuit_size)
+                      circuit_size,
+                      data_stored)
         random_circuit = simulator.random_circuit
         gate_parameters = random_circuit.gate_parameters
         self.update_figures(gate_parameters, random_circuit)
@@ -223,10 +226,20 @@ def main():
     """
     Creates visualizer and runs simulation.
     """
-    SIMULATION_OPTION = 0
+    # Chooses one of three noise level simulation options:
+    #  0) all noise levels,
+    #  1) noise levels without noise scaling,
+    #  2) noise levels with noise scaling,
+    #  3) no noise levels (i.e., no simulation, load data (?))
+    #
+    # And one of two save file simulation options:
+    #  0) save data to a text file,
+    #  1) don't save data.
+
+    SIMULATION_OPTION = 3
     SAVEFILE_OPTION = 1
     simulator = Simulator(SIMULATION_OPTION, SAVEFILE_OPTION)
-    visualizer = Visualizer(simulator)
+    visualizer = Visualizer(simulator, SIMULATION_OPTION)
     circuit_image = build_circuit_image()
     max_gate_parameters = simulator.max_gate_parameters
     parameter_map = build_parameter_map(max_gate_parameters)
